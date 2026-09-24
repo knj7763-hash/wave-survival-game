@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT, FONT_FAMILY, STORAGE_KEYS } from '../config.js';
 import { loadSave } from '../systems/SaveData.js';
 import { costumeTextureKey } from '../shop/shopData.js';
+import { backgroundKey, BACKGROUND_TINT } from '../systems/Assets.js';
 import { createButton } from '../ui/Button.js';
 
 const TEXT = { fontFamily: FONT_FAMILY, color: '#ffffff' };
@@ -23,19 +24,21 @@ export default class TitleScene extends Phaser.Scene {
     const cx = GAME_WIDTH / 2;
     const save = loadSave();
     this.cameras.main.setBackgroundColor('#141824');
+    this.add.image(0, GAME_HEIGHT, backgroundKey(1)).setOrigin(0, 1).setDisplaySize(GAME_WIDTH, GAME_WIDTH).setTint(BACKGROUND_TINT);
+    this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x0d1017, 0.45).setOrigin(0);
 
     // 배경: 양쪽 가장자리에서 다가오는 적 실루엣
     for (let i = 0; i < 14; i++) {
       const left = i % 2 === 0;
-      const e = this.add.image(left ? -30 : GAME_WIDTH + 30, Phaser.Math.Between(80, GAME_HEIGHT - 80), 'enemy')
-        .setAlpha(0.25).setFlipX(left);
+      const e = this.add.sprite(left ? -30 : GAME_WIDTH + 30, Phaser.Math.Between(80, GAME_HEIGHT - 80), 'enemy')
+        .setAlpha(0.35).setFlipX(left).play('enemy-walk');
       this.tweens.add({
         targets: e, x: cx + (left ? -160 : 160), duration: Phaser.Math.Between(4000, 9000),
         delay: i * 500, repeat: -1,
       });
     }
 
-    this.add.image(cx, 170, costumeTextureKey(save.costumes.equipped, save.costumes.gender)).setScale(3);
+    this.add.image(cx, 150, costumeTextureKey(save.costumes.equipped, true));
     this.add.text(cx, 275, '웨이브 서바이벌', {
       ...TEXT, fontSize: '64px', stroke: '#000000', strokeThickness: 8,
     }).setOrigin(0.5);
@@ -49,11 +52,18 @@ export default class TitleScene extends Phaser.Scene {
     });
 
     const best = loadBest();
-    this.add.text(cx, 520, `최고 생존 기록 ${formatTime(best)}   ·   보유 코인 💰${save.coins}`, {
-      ...TEXT, fontSize: '16px', color: '#8a93a6',
-    }).setOrigin(0.5);
+    // [최고 기록 · 보유 코인] [코인 아이콘] [숫자]를 한 줄로 이어 붙여 가운데 정렬
+    const infoStyle = { ...TEXT, fontSize: '16px', color: '#b0b8c8' };
+    const label = this.add.text(0, 520, `최고 생존 기록 ${formatTime(best)}   ·   보유 코인 `, infoStyle).setOrigin(0, 0.5);
+    const icon = this.add.image(0, 520, 'hud-coin').setScale(0.7);
+    const amount = this.add.text(0, 520, ` ${save.coins}`, { ...infoStyle, color: '#ffd54f' }).setOrigin(0, 0.5);
+    label.x = cx - (label.width + icon.displayWidth + amount.width) / 2;
+    icon.x = label.x + label.width + icon.displayWidth / 2;
+    amount.x = icon.x + icon.displayWidth / 2;
 
-    createButton(this, cx, 590, 260, 60, '게임 시작 ▶', () => this.startGame(), { style: 'primary', fontSize: 24 });
+    // 무기는 런 전에 상점에서 고르므로 타이틀에서도 상점으로 갈 수 있다
+    createButton(this, cx - 140, 590, 260, 60, '게임 시작 ▶', () => this.startGame(), { style: 'primary', fontSize: 24 });
+    createButton(this, cx + 140, 590, 260, 60, '상점 (무기 선택)', () => this.scene.start('Shop'), { style: 'warn', fontSize: 22 });
     this.add.text(cx, 640, 'Enter 키로도 시작할 수 있어요', { ...TEXT, fontSize: '14px', color: '#6b7488' }).setOrigin(0.5);
     this.input.keyboard.once('keydown-ENTER', () => this.startGame());
     this.input.keyboard.once('keydown-SPACE', () => this.startGame());

@@ -7,6 +7,11 @@ const PLAYER_HIT_RADIUS = 12; // 광역 공격 판정 시 더해 주는 플레�
 const WARN_COLOR = 0xff1744;
 const SCREEN_MARGIN = 80; // 낙뢰가 떨어질 수 있는 화면 가장자리 여백
 
+// 설정값이 [min, max]면 그 범위에서 무작위, 숫자면 그대로
+function randomMs(value) {
+  return Array.isArray(value) ? Phaser.Math.Between(value[0], value[1]) : value;
+}
+
 // 준보스/보스. 추격 → 패턴 → 추격을 반복한다.
 // 패턴 진행은 모두 씬 타이머/트윈으로 처리해서, 레벨업 화면으로 일시정지되면 함께 멈춘다.
 //
@@ -23,6 +28,7 @@ export default class Boss extends Enemy {
   }
 
   chase(target, now) {
+    this.updateLook();
     switch (this.state) {
       case 'chase':
         super.chase(target, now);
@@ -39,12 +45,27 @@ export default class Boss extends Enemy {
     }
   }
 
+  // 보스(톱날)는 늘 회전하고 돌진할 때 더 빨리 돈다. 준보스는 패턴을 준비/실행하는 동안 공격 자세.
+  updateLook() {
+    if (this.typeId === 'boss') {
+      this.rotation += this.state === 'dash' ? 0.5 : 0.12;
+      return;
+    }
+    const attacking = this.state !== 'chase';
+    if (attacking && !this.attackPose) {
+      this.anims.stop();
+      this.setTexture(`${this.baseTexture}-move`); // 바나클의 이동 프레임 = 입을 벌린 공격 자세
+    } else if (!attacking && this.attackPose) {
+      this.anims.play(`${this.baseTexture}-walk`);
+    }
+    this.attackPose = attacking;
+  }
+
   // ─── 패턴 순환 ───────────────────────────────────────
 
   scheduleNextPattern() {
     this.state = 'chase';
-    const [min, max] = this.ai.idleMs;
-    this.later(Phaser.Math.Between(min, max), () => this.startPattern());
+    this.later(randomMs(this.ai.idleMs), () => this.startPattern());
   }
 
   startPattern() {
@@ -67,9 +88,18 @@ export default class Boss extends Enemy {
   // ─── 패턴: 돌진 ──────────────────────────────────────
 
   patternDash() {
+    const [min, max] = BOSS_AI.dash.chain[this.typeId];
+    this.dashChain(Phaser.Math.Between(min, max), true);
+  }
+
+  // remaining번 연속 돌진. 첫 돌진만 준비 시간이 길다.
+  dashChain(remaining, isFirst) {
     const cfg = BOSS_AI.dash;
     const player = this.scene.player;
-    const angle = Phaser.Math.Angle.Between(this.x, this.y, player.x, player.y);
+    // 플레이어가 움직이는 방향으로 앞질러 조준 (가만히 있으면 정조준)
+    const aimX = player.x + player.body.velocity.x * cfg.aimLead;
+    const aimY = player.y + player.body.velocity.y * cfg.aimLead;
+    const angle = Phaser.Math.Angle.Between(this.x, this.y, aimX, aimY);
     this.state = 'hold';
     this.setFlipX(Math.cos(angle) > 0);
     playSfx(this.scene, 'dashWarn');
@@ -80,14 +110,15 @@ export default class Boss extends Enemy {
     warn.lineStyle(this.radius * 1.4, WARN_COLOR, 0.25).lineBetween(this.x, this.y, end.x, end.y);
     this.scene.tweens.add({ targets: warn, alpha: 0.3, duration: 120, yoyo: true, repeat: -1 });
 
-    this.later(cfg.windupMs, () => {
+    this.later(isFirst ? randomMs(cfg.windupMs) : cfg.chainWindupMs, () => {
       this.removeFx(warn);
       this.state = 'dash';
       this.scene.physics.velocityFromRotation(angle, cfg.speed, this.body.velocity);
 
       this.later(cfg.dashMs, () => {
         this.state = 'hold';
-        this.later(cfg.recoverMs, () => this.scheduleNextPattern());
+        if (remaining > 1) this.dashChain(remaining - 1, false);
+        else this.later(cfg.recoverMs, () => this.scheduleNextPattern());
       });
     });
   }
@@ -103,9 +134,10 @@ export default class Boss extends Enemy {
       .setStrokeStyle(3, WARN_COLOR, 0.8).setDepth(4));
     const fill = this.addFx(this.scene.add.circle(this.x, this.y, cfg.radius, WARN_COLOR, 0.25)
       .setScale(0).setDepth(4));
-    this.scene.tweens.add({ targets: fill, scale: 1, duration: cfg.windupMs });
+    const windupMs = randomMs(cfg.windupMs);
+    this.scene.tweens.add({ targets: fill, scale: 1, duration: windupMs });
 
-    this.later(cfg.windupMs, () => {
+    this.later(windupMs, () => {
       this.removeFx(outline);
       this.removeFx(fill);
 
@@ -118,6 +150,37 @@ export default class Boss extends Enemy {
 
       const player = this.scene.player;
       if (Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y) <= cfg.radius + PLAYER_HIT_RADIUS) {
+        this.scene.damagePlayer(this.scaled(cfg.damage));
+      }
+
+      if (Math.random() < cfg.followUpChance) this.shockwaveRing(cfg);
+      else this.later(400, () => this.scheduleNextPattern());
+    });
+  }
+
+  // 광역 공격 직후 바깥 고리 폭발: 첫 폭발을 피해 빠져나간 위치를 노린다. 안쪽 원은 안전.
+  shockwaveRing(cfg) {
+    const { x, y } = this;
+    const width = cfg.ringOuter - cfg.ringInner;
+    const mid = (cfg.ringOuter + cfg.ringInner) / 2;
+    const ring = this.addFx(this.scene.add.circle(x, y, mid).setStrokeStyle(width, WARN_COLOR, 0.22).setDepth(4));
+    const edge = this.addFx(this.scene.add.circle(x, y, cfg.ringOuter).setStrokeStyle(3, WARN_COLOR, 0.8).setDepth(4));
+    this.scene.tweens.add({ targets: ring, alpha: 0.5, duration: 110, yoyo: true, repeat: -1 });
+
+    this.later(cfg.ringWindupMs, () => {
+      this.removeFx(ring);
+      this.removeFx(edge);
+
+      const blast = this.scene.add.circle(x, y, mid).setStrokeStyle(width, 0xffffff, 0.6).setDepth(7);
+      this.scene.tweens.add({
+        targets: blast, alpha: 0, scale: 1.08, duration: 250, onComplete: () => blast.destroy(),
+      });
+      this.scene.cameras.main.shake(150, 0.008);
+      playSfx(this.scene, 'explosion');
+
+      const player = this.scene.player;
+      const d = Phaser.Math.Distance.Between(x, y, player.x, player.y);
+      if (d >= cfg.ringInner - PLAYER_HIT_RADIUS && d <= cfg.ringOuter + PLAYER_HIT_RADIUS) {
         this.scene.damagePlayer(this.scaled(cfg.damage));
       }
       this.later(400, () => this.scheduleNextPattern());
@@ -142,19 +205,29 @@ export default class Boss extends Enemy {
       onComplete: () => {
         if (!this.active) return;
         for (let v = 0; v < cfg.volleys; v++) {
-          this.later(v * cfg.volleyGapMs, () => this.fireRing(cfg, v));
+          this.later(v * cfg.volleyGapMs, () => this.fireRing(cfg));
         }
         this.later(cfg.volleys * cfg.volleyGapMs + 300, () => this.scheduleNextPattern());
       },
     });
   }
 
-  fireRing(cfg, volleyIndex) {
+  fireRing(cfg) {
+    const damage = this.scaled(cfg.damage);
+    const fire = (angle) => this.scene.enemyBullets.create(this.x, this.y, 'enemy-bullet')
+      .fire(angle, cfg.bulletSpeed, damage);
+
+    // 전방위 고리: 발사마다 빈틈 위치가 무작위로 바뀐다
     const step = (Math.PI * 2) / cfg.bulletsPerVolley;
-    const offset = (volleyIndex % 2) * (step / 2); // 발사마다 반 칸씩 엇갈려서 빈틈 위치를 바꿈
-    for (let i = 0; i < cfg.bulletsPerVolley; i++) {
-      this.scene.enemyBullets.create(this.x, this.y, 'enemy-bullet')
-        .fire(offset + i * step, cfg.bulletSpeed, this.scaled(cfg.damage));
+    const offset = Math.random() * step;
+    for (let i = 0; i < cfg.bulletsPerVolley; i++) fire(offset + i * step);
+
+    // 플레이어를 노리는 부채꼴 탄: 고리 빈틈에 가만히 서 있으면 맞는다
+    const player = this.scene.player;
+    const aim = Phaser.Math.Angle.Between(this.x, this.y, player.x, player.y);
+    const spread = Phaser.Math.DegToRad(cfg.aimedSpreadDeg);
+    for (let i = 0; i < cfg.aimedBullets; i++) {
+      fire(aim - spread / 2 + (spread * i) / Math.max(1, cfg.aimedBullets - 1));
     }
     playSfx(this.scene, 'missile');
   }
@@ -175,21 +248,32 @@ export default class Boss extends Enemy {
       });
     }
 
-    for (const spot of spots) {
-      const outline = this.addFx(this.scene.add.circle(spot.x, spot.y, cfg.radius)
-        .setStrokeStyle(3, 0xffea00, 0.9).setDepth(4));
-      const fill = this.addFx(this.scene.add.circle(spot.x, spot.y, cfg.radius, 0xffea00, 0.25)
-        .setScale(0).setDepth(4));
-      this.scene.tweens.add({ targets: fill, scale: 1, duration: cfg.delayMs });
+    const delayMs = randomMs(cfg.delayMs);
+    for (const spot of spots) this.warnStrike(spot, delayMs, cfg);
 
-      this.later(cfg.delayMs, () => {
-        this.removeFx(outline);
-        this.removeFx(fill);
-        this.strike(spot, cfg);
+    // 추적 낙뢰: 그 시점의 플레이어 위치를 노려 연달아 예고
+    for (let i = 1; i <= cfg.followUps; i++) {
+      this.later(i * cfg.followUpGapMs, () => {
+        this.warnStrike({ x: player.x, y: player.y }, cfg.followUpDelayMs, cfg);
       });
     }
 
-    this.later(cfg.delayMs + 500, () => this.scheduleNextPattern());
+    const endMs = Math.max(delayMs, cfg.followUps * cfg.followUpGapMs + cfg.followUpDelayMs);
+    this.later(endMs + 400, () => this.scheduleNextPattern());
+  }
+
+  warnStrike(spot, delayMs, cfg) {
+    const outline = this.addFx(this.scene.add.circle(spot.x, spot.y, cfg.radius)
+      .setStrokeStyle(3, 0xffea00, 0.9).setDepth(4));
+    const fill = this.addFx(this.scene.add.circle(spot.x, spot.y, cfg.radius, 0xffea00, 0.25)
+      .setScale(0).setDepth(4));
+    this.scene.tweens.add({ targets: fill, scale: 1, duration: delayMs });
+
+    this.later(delayMs, () => {
+      this.removeFx(outline);
+      this.removeFx(fill);
+      this.strike(spot, cfg);
+    });
   }
 
   strike(spot, cfg) {

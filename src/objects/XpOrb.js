@@ -7,9 +7,9 @@ export default class XpOrb extends Phaser.Physics.Arcade.Image {
     this.value = value;
     this.magnetized = false;
     this.setDepth(2);
-    // 준보스/보스가 떨어뜨린 큰 오브는 금색으로 크게 표시
-    if (value > 1) this.setScale(1.8).setTint(0xffd54f);
-    this.body.setCircle(5);
+    // 준보스/보스/탱커가 떨어뜨린 큰 오브는 노란 보석으로 표시
+    if (value > 1) this.setTexture('xp-orb-big');
+    this.body.setCircle(6, this.width / 2 - 6, this.height / 2 - 6);
     return this;
   }
 

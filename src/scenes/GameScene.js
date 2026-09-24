@@ -16,13 +16,18 @@ import SkillManager from '../systems/SkillManager.js';
 import SkillBar from '../ui/SkillBar.js';
 import { createButton } from '../ui/Button.js';
 import { loadSave, writeSave } from '../systems/SaveData.js';
-import { getLoadout, getItemStats } from '../shop/shopLogic.js';
+import { backgroundKey, BACKGROUND_TINT } from '../systems/Assets.js';
+import { getLoadout, getItemStats, getEquippedWeapon } from '../shop/shopLogic.js';
 import { MATERIALS, costumeTextureKey } from '../shop/shopData.js';
-import { WEAPONS, STARTING_WEAPON, TIER_NAMES, describeUpgrade } from '../weapons/weaponData.js';
+import { TIER_NAMES } from '../weapons/weaponData.js';
 import { WEAPON_CLASSES } from '../weapons/weaponTypes.js';
+import LevelUpEffects from '../effects/LevelUpEffects.js';
+import { MAX_OWNED_EFFECTS } from '../effects/effectData.js';
 
 const SPAWN_MARGIN = 24; // 화면 밖에서 등장하도록 가장자리 바깥 거리
 const BOSS_BAR_W = 500;
+const HEART_HP = 10; // 하트 1개 = 체력 10 (반 칸 = 5)
+const BG_DIM = 0.35; // 캐릭터와 경고 표시가 잘 보이도록 배경을 어둡게 덮는 정도
 const BOSS_NAMES = { miniboss: '준보스', boss: 'BOSS' };
 
 export default class GameScene extends Phaser.Scene {
@@ -32,11 +37,13 @@ export default class GameScene extends Phaser.Scene {
 
   init(data) {
     this.startStage = data.stage ?? 1;
-    // 런 시작 시점의 영구 데이터 (상점에서 산 스킬/아이템/코스튬)
+    // 런 시작 시점의 영구 데이터 (상점에서 산 무기/스킬/아이템/코스튬)
     const save = loadSave();
+    this.weaponLoadout = getEquippedWeapon(save);
     this.loadout = getLoadout(save);
     this.playerStats = getItemStats(save);
-    this.playerTexture = costumeTextureKey(save.costumes.equipped, save.costumes.gender);
+    this.costume = save.costumes.equipped;
+    this.playerTexture = costumeTextureKey(this.costume);
     // 이번 런에서 얻은 보상 (런 종료 시 저장)
     this.runCoins = { kills: 0, waves: 0, record: 0 };
     this.runMaterials = {};
@@ -47,7 +54,7 @@ export default class GameScene extends Phaser.Scene {
     this.pendingLevelUps = 0;
     this.isGameOver = false;
     // 재시작해도 씬 인스턴스는 재사용되므로, 이전 판에서 파괴된 표시 객체 참조를 지운다.
-    this.weaponText = null;
+    this.effectText = null;
     this.banner = null;
   }
 
@@ -83,20 +90,25 @@ export default class GameScene extends Phaser.Scene {
     this.events.on(ENEMY_EVENTS.KILLED, this.onEnemyKilled, this);
     this.events.once('shutdown', () => this.events.off(ENEMY_EVENTS.KILLED, this.onEnemyKilled, this));
 
-    this.weapons = [];
-    this.addOrUpgradeWeapon(STARTING_WEAPON);
+    // 무기는 상점에서 장착한 것 하나로 고정. 레벨업으로는 무기와 별개인 레벨업 효과를 얻는다.
+    const { id: weaponId, level: weaponLevel } = this.weaponLoadout;
+    this.weapon = new WEAPON_CLASSES[weaponId](this, this.player, weaponId, weaponLevel);
+    this.levelUpEffects = new LevelUpEffects(this);
 
     this.skills = new SkillManager(this, this.loadout);
 
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,R,N,M,ONE,TWO,THREE,F');
+    this.keys = this.input.keyboard.addKeys('W,A,S,D,R,N,L,M,ONE,TWO,THREE,F');
     ['ONE', 'TWO', 'THREE'].forEach((key, slot) => this.keys[key].on('down', () => this.useSkill(slot)));
     this.keys.F.on('down', () => this.toggleSkillAuto());
     this.keys.M.on('down', () => this.updateMuteText(toggleMute(this)));
-    // 개발용 (npm run dev에서만): N 키로 현재 웨이브 즉시 클리어
+    // 개발용 (npm run dev에서만): N 키로 현재 웨이브 즉시 클리어, L 키로 즉시 레벨업
     if (import.meta.env.DEV) {
       this.keys.N.on('down', () => {
         if (!this.isGameOver) this.waves.skipWave();
+      });
+      this.keys.L.on('down', () => {
+        if (!this.isGameOver) this.gainXp(xpToNextLevel(this.level) - this.xp);
       });
     }
 
@@ -120,7 +132,8 @@ export default class GameScene extends Phaser.Scene {
       if (enemy.active) enemy.chase(this.player, time);
     }
 
-    for (const weapon of this.weapons) weapon.update(time);
+    this.weapon.update(time);
+    this.levelUpEffects.update(delta);
     this.skills.update(delta, time);
 
     this.updateHud();
@@ -132,14 +145,14 @@ export default class GameScene extends Phaser.Scene {
 
   // ─── 적 ──────────────────────────────────────────────
 
-  // diff: difficultyFor(stage, wave) 결과 (체력/속도/공격력 배율)
-  spawnEnemy(typeId, side, diff) {
+  // diff: difficultyFor(stage, wave) 결과 (체력/속도/공격력 배율). y를 생략하면 무작위 높이.
+  spawnEnemy(typeId, side, diff, y) {
     const type = ENEMY_TYPES[typeId];
     const offset = SPAWN_MARGIN + type.radius;
     const x = side === 'left' ? -offset : GAME_WIDTH + offset;
-    const y = type.isBoss
-      ? GAME_HEIGHT / 2
-      : Phaser.Math.Between(SPAWN_MARGIN, GAME_HEIGHT - SPAWN_MARGIN);
+    if (type.isBoss) y = GAME_HEIGHT / 2;
+    else if (y === undefined) y = Phaser.Math.Between(SPAWN_MARGIN, GAME_HEIGHT - SPAWN_MARGIN);
+    else y = Phaser.Math.Clamp(y, SPAWN_MARGIN, GAME_HEIGHT - SPAWN_MARGIN);
     if (type.isBoss) {
       const boss = new Boss(this, x, y);
       this.enemies.add(boss, true);
@@ -253,18 +266,7 @@ export default class GameScene extends Phaser.Scene {
     if (!this.isGameOver) this.skills.toggleAuto();
   }
 
-  // ─── 무기 / 경험치 / 레벨업 ─────────────────────────────
-
-  addOrUpgradeWeapon(id) {
-    const owned = this.weapons.find((w) => w.id === id);
-    if (owned) owned.upgrade();
-    else this.weapons.push(new WEAPON_CLASSES[id](this, this.player, id));
-    this.weaponText?.setText(this.weaponSummary());
-  }
-
-  weaponSummary() {
-    return this.weapons.map((w) => `${w.data.name} ${TIER_NAMES[w.level - 1]}`).join('  ·  ');
-  }
+  // ─── 경험치 / 레벨업 효과 ───────────────────────────────
 
   collectOrb(orb) {
     if (!orb.active) return;
@@ -299,33 +301,19 @@ export default class GameScene extends Phaser.Scene {
     this.scene.launch('LevelUp', {
       level: this.level - this.pendingLevelUps,
       choices: this.buildLevelUpChoices(),
+      owned: this.levelUpEffects.summary(),
+      maxOwned: MAX_OWNED_EFFECTS,
       onPick: (choice) => this.applyLevelUpChoice(choice),
     });
     this.scene.pause();
   }
 
-  // 신규 무기 + 보유 무기 강화 중 무작위 3개. 부족하면 체력 회복으로 채운다.
+  // 신규 효과 + 보유 효과 강화 중 무작위 3개. 부족하면 (모두 최대 강화 등) 체력 회복으로 채운다.
   buildLevelUpChoices() {
-    const pool = [];
-    for (const [id, data] of Object.entries(WEAPONS)) {
-      const owned = this.weapons.find((w) => w.id === id);
-      if (!owned) {
-        pool.push({ type: 'new', id, title: data.name, tag: '신규 무기', lines: [data.desc] });
-      } else if (!owned.isMaxLevel) {
-        pool.push({
-          type: 'upgrade',
-          id,
-          title: data.name,
-          tag: `${TIER_NAMES[owned.level - 1]} → ${TIER_NAMES[owned.level]}`,
-          lines: describeUpgrade(id, owned.level),
-        });
-      }
-    }
-
-    const choices = Phaser.Utils.Array.Shuffle(pool).slice(0, LEVEL_UP.choiceCount);
+    const choices = this.levelUpEffects.buildChoices(LEVEL_UP.choiceCount);
     if (choices.length < LEVEL_UP.choiceCount) {
       choices.push({
-        type: 'heal', title: '체력 회복', tag: '회복', lines: [`체력 +${LEVEL_UP.healAmount}`],
+        type: 'heal', icon: '❤️', title: '체력 회복', tag: '회복', lines: [`체력 +${LEVEL_UP.healAmount}`],
       });
     }
     return choices;
@@ -333,14 +321,21 @@ export default class GameScene extends Phaser.Scene {
 
   applyLevelUpChoice(choice) {
     if (choice.type === 'heal') this.player.heal(LEVEL_UP.healAmount);
-    else this.addOrUpgradeWeapon(choice.id);
+    else this.levelUpEffects.addOrUpgrade(choice.id);
+    this.effectText.setText(this.effectSummary());
     this.updateHud();
+  }
+
+  // 화면 왼쪽 아래 보유 효과 표시: "⚽ 2  ⚡ 1 ..."
+  effectSummary() {
+    return this.levelUpEffects.summary().map(({ icon, level }) => `${icon} ${level}`).join('   ');
   }
 
   // ─── 게임 종료 ───────────────────────────────────────
 
   gameOver() {
-    this.player.setTint(0x888888);
+    this.player.anims.stop();
+    this.player.setTexture(`${this.playerTexture}-hit`).setTint(0x888888);
     stopMusic();
     playSfx(this, 'gameOver');
     this.endRun('GAME OVER', '#ff5252');
@@ -357,7 +352,8 @@ export default class GameScene extends Phaser.Scene {
     this.physics.pause();
     this.waves.stopTimers();
     this.time.removeAllEvents(); // 예약된 다음 웨이브 시작 등을 취소
-    for (const w of this.weapons) w.graphics?.clear(); // 레이저 빔 제거
+    this.weapon.graphics?.clear(); // 레이저 빔 제거
+    this.levelUpEffects.destroy(); // 궤도 구체/장판/투사체 제거
     this.skills.destroy(); // 화염 브레스/보호막 표시 제거
 
     const best = this.saveBestSurvival(this.elapsedMs);
@@ -399,11 +395,16 @@ export default class GameScene extends Phaser.Scene {
 
   // ─── 화면 표시 ───────────────────────────────────────
 
+  // 스테이지별 배경 (정사각형 원본을 가로에 맞추고 아래쪽 땅 부분이 보이게 배치)
   drawBackground() {
-    const g = this.add.graphics();
-    g.lineStyle(1, 0xffffff, 0.04);
-    for (let x = 0; x <= GAME_WIDTH; x += 64) g.lineBetween(x, 0, x, GAME_HEIGHT);
-    for (let y = 0; y <= GAME_HEIGHT; y += 64) g.lineBetween(0, y, GAME_WIDTH, y);
+    this.background = this.add.image(0, GAME_HEIGHT, backgroundKey(this.waves.stage))
+      .setOrigin(0, 1).setDisplaySize(GAME_WIDTH, GAME_WIDTH).setTint(BACKGROUND_TINT).setDepth(-10);
+    this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x0d1017, BG_DIM).setOrigin(0).setDepth(-9);
+  }
+
+  // 웨이브 매니저가 다음 스테이지로 넘어갈 때 호출
+  onStageChanged(stage) {
+    this.background.setTexture(backgroundKey(stage)).setDisplaySize(GAME_WIDTH, GAME_WIDTH);
   }
 
   // 적이 등장하는 쪽 가장자리를 붉게 표시
@@ -430,16 +431,21 @@ export default class GameScene extends Phaser.Scene {
   }
 
   createHud() {
-    const style = { fontFamily: FONT_FAMILY, fontSize: '20px', color: '#ffffff' };
+    // 배경 그림 위에서도 읽히도록 외곽선을 둔다
+    const style = { fontFamily: FONT_FAMILY, fontSize: '20px', color: '#ffffff', stroke: '#000000', strokeThickness: 3 };
 
-    this.hpBarBg = this.add.rectangle(20, 20, 240, 18, 0x000000, 0.6).setOrigin(0).setDepth(10);
-    this.hpBar = this.add.rectangle(22, 22, 236, 14, 0x4caf50).setOrigin(0).setDepth(10);
-    this.hpText = this.add.text(270, 18, '', style).setDepth(10);
+    // 체력: 캐릭터 얼굴 + 하트 (하트 1개 = 체력 10)
+    this.add.image(38, 36, `hud-player-${this.costume}`).setDepth(10);
+    this.hearts = [];
+    for (let i = 0; i < Math.ceil(this.player.maxHp / HEART_HP); i++) {
+      this.hearts.push(this.add.image(74 + i * 26, 26, 'hud-heart-full').setDepth(10));
+    }
+    this.hpText = this.add.text(74 + this.hearts.length * 26, 14, '', { ...style, fontSize: '18px' }).setDepth(10);
 
     // 경험치 바: 화면 최상단 전체 폭
     this.add.rectangle(0, 0, GAME_WIDTH, 6, 0x000000, 0.6).setOrigin(0).setDepth(10);
     this.xpBar = this.add.rectangle(0, 0, 0, 6, 0x1de9b6).setOrigin(0).setDepth(10);
-    this.levelText = this.add.text(20, 44, '', { ...style, fontSize: '18px', color: '#1de9b6' }).setDepth(10);
+    this.levelText = this.add.text(62, 44, '', { ...style, fontSize: '17px', color: '#1de9b6' }).setDepth(10);
 
     this.stageText = this.add.text(GAME_WIDTH / 2, 16, '', { ...style, fontSize: '22px' })
       .setOrigin(0.5, 0).setDepth(10);
@@ -452,17 +458,23 @@ export default class GameScene extends Phaser.Scene {
     this.bossBar = this.add.rectangle(barX + 2, 74, BOSS_BAR_W - 4, 10, 0xe53935).setOrigin(0).setDepth(10);
 
     this.timeText = this.add.text(GAME_WIDTH - 20, 18, '', style).setOrigin(1, 0).setDepth(10);
-    this.killText = this.add.text(GAME_WIDTH - 20, 46, '', { ...style, fontSize: '16px', color: '#b0b8c8' })
+    this.coinText = this.add.text(GAME_WIDTH - 20, 46, '', { ...style, fontSize: '16px', color: '#ffd54f' })
+      .setOrigin(1, 0).setDepth(10);
+    this.coinIcon = this.add.image(0, 56, 'hud-coin').setScale(0.75).setDepth(10);
+    this.killText = this.add.text(0, 46, '', { ...style, fontSize: '16px', color: '#cfd6e4' })
       .setOrigin(1, 0).setDepth(10);
     this.muteText = this.add.text(GAME_WIDTH - 20, 70, '', { ...style, fontSize: '14px', color: '#8a93a6' })
       .setOrigin(1, 0).setDepth(10).setInteractive({ useHandCursor: true });
     this.muteText.on('pointerdown', () => this.updateMuteText(toggleMute(this)));
     this.updateMuteText(isMuted());
 
-    this.weaponText = this.add.text(20, GAME_HEIGHT - 16, this.weaponSummary(), { ...style, fontSize: '16px' })
+    // 왼쪽 아래: 레벨업 효과 (위) + 장착 무기 (아래)
+    const weapon = `${this.weapon.data.name} ${TIER_NAMES[this.weapon.level - 1]}`;
+    this.add.text(20, GAME_HEIGHT - 16, weapon, { ...style, fontSize: '16px' }).setOrigin(0, 1).setDepth(10);
+    this.effectText = this.add.text(20, GAME_HEIGHT - 42, '', { ...style, fontSize: '18px' })
       .setOrigin(0, 1).setDepth(10);
     this.add.text(GAME_WIDTH - 20, GAME_HEIGHT - 16,
-      `WASD 이동 · 1/2/3 스킬 · F AUTO${import.meta.env.DEV ? '\nN 웨이브 스킵(개발용)' : ''}`, {
+      `WASD 이동 · 1/2/3 스킬 · F AUTO${import.meta.env.DEV ? '\nN 웨이브 스킵 · L 즉시 레벨업 (개발용)' : ''}`, {
         ...style, fontSize: '14px', color: '#8a93a6', align: 'right',
       }).setOrigin(1, 1).setDepth(10);
 
@@ -476,12 +488,16 @@ export default class GameScene extends Phaser.Scene {
 
   updateHud() {
     const { hp, maxHp } = this.player;
-    const ratio = hp / maxHp;
-    this.hpBar.width = 236 * ratio;
-    this.hpBar.fillColor = ratio > 0.5 ? 0x4caf50 : ratio > 0.25 ? 0xffc107 : 0xf44336;
+    this.hearts.forEach((heart, i) => {
+      const left = hp - i * HEART_HP;
+      heart.setTexture(left >= HEART_HP ? 'hud-heart-full' : left >= HEART_HP / 2 ? 'hud-heart-half' : 'hud-heart-empty');
+    });
     this.hpText.setText(`${hp} / ${maxHp}`);
     this.timeText.setText(`생존 ${formatTime(this.elapsedMs)}`);
-    this.killText.setText(`처치 ${this.kills}  ·  코인 +${this.runCoinTotal}`);
+    // 오른쪽 위: [처치 N]  [코인 아이콘] +N (오른쪽 정렬이라 글자 폭에 맞춰 아이콘 위치를 옮긴다)
+    this.coinText.setText(`+${this.runCoinTotal}`);
+    this.coinIcon.x = this.coinText.x - this.coinText.width - 13;
+    this.killText.setText(`처치 ${this.kills}`).setPosition(this.coinIcon.x - 16 - this.killText.width, 46);
 
     const need = xpToNextLevel(this.level);
     this.xpBar.width = GAME_WIDTH * Math.min(1, this.xp / need);
@@ -525,11 +541,11 @@ export default class GameScene extends Phaser.Scene {
     const { kills, waves, record } = this.runCoins;
     const parts = [`처치 ${kills}`, `웨이브 보너스 ${waves}`];
     if (record) parts.push(`신기록 보너스 ${record}`);
-    line(cy - 5, `획득 코인  +${this.runCoinTotal}`, { fontSize: '30px', color: '#ffd54f' });
+    withCoinIcon(line(cy - 5, `획득 코인  +${this.runCoinTotal}`, { fontSize: '30px', color: '#ffd54f' }));
     line(cy + 32, parts.join('  ·  '), { fontSize: '16px', color: '#b0b8c8' });
     const mats = Object.entries(this.runMaterials).map(([id, n]) => `${MATERIALS[id].name} ×${n}`);
     if (mats.length) line(cy + 58, `획득 재료  ${mats.join(', ')}`, { fontSize: '16px', color: '#ce93d8' });
-    line(cy + 92, `보유 코인  ${totalCoins}`, { fontSize: '18px' });
+    withCoinIcon(line(cy + 92, `보유 코인  ${totalCoins}`, { fontSize: '18px' }));
 
     createButton(this, cx - 120, cy + 160, 200, 52, '상점', () => this.scene.start('Shop'), {
       style: 'warn', fontSize: 22, depth: 22,
@@ -550,6 +566,14 @@ export default class GameScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(15);
     this.tweens.add({ targets: t, y: t.y - 50, alpha: 0, delay: 800, duration: 900, onComplete: () => t.destroy() });
   }
+}
+
+// 가운데 정렬된 글자 왼쪽에 코인 아이콘을 붙인다
+function withCoinIcon(text) {
+  const size = text.height * 0.9;
+  text.scene.add.image(text.x - text.width / 2 - size * 0.7, text.y, 'hud-coin')
+    .setDisplaySize(size, size).setDepth(text.depth);
+  return text;
 }
 
 function formatTime(ms) {

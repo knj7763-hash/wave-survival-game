@@ -8,11 +8,14 @@ export function difficultyFor(stage, wave) {
   return {
     progress: p,
     hpMul: (1 + d.hpPerStage * (stage - 1)) * (1 + d.hpPerWave * (wave - 1)),
+    bossHpMul: (1 + d.bossHpPerStage * (stage - 1)) * (1 + d.hpPerWave * (wave - 1)),
     damageMul: 1 + d.damagePerStage * (stage - 1),
     speedMul: Math.min(d.maxSpeedMul, 1 + d.speedPerStep * p),
     spawnIntervalMs: Math.max(d.minSpawnIntervalMs, WAVE.normalSpawnIntervalMs * (1 - d.spawnSpeedupPerStep * p)),
-    spawnBatch: 1 + Math.floor(p / d.stepsPerExtraSpawn),
+    spawnBatch: Math.min(d.maxSpawnBatch, 1 + Math.floor(p / d.stepsPerExtraSpawn)),
     minionIntervalMs: Math.max(d.minMinionIntervalMs, WAVE.bossMinionIntervalMs * (1 - d.minionSpeedupPerStep * p)),
+    rushIntervalMs: Math.max(d.minRushIntervalMs, WAVE.rushIntervalMs * (1 - d.rushSpeedupPerStep * p)),
+    rushSize: d.rushSizeBase + Math.floor(p / d.stepsPerExtraRush),
     mix: ENEMY_MIX[Math.min(stage, ENEMY_MIX.length) - 1],
   };
 }

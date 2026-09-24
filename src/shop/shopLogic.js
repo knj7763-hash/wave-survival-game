@@ -1,7 +1,8 @@
 // 상점 동작. 모두 save 객체를 직접 수정하고 결과를 반환한다 (저장은 호출한 쪽에서).
 import { SKILLS, MAX_EQUIPPED_SKILLS } from '../skills/skillData.js';
+import { WEAPONS } from '../weapons/weaponData.js';
 import {
-  ITEMS, MAX_ITEM_LEVEL, ENHANCE_TABLE, STAT_EFFECT, COSTUMES,
+  ITEMS, MAX_ITEM_LEVEL, ENHANCE_TABLE, STAT_EFFECT, COSTUMES, WEAPON_PRICES, WEAPON_TIER_COSTS,
 } from './shopData.js';
 
 const MAX_SKILL_LEVEL = 5;
@@ -95,6 +96,46 @@ export function getItemStats(save) {
   };
 }
 
+// ─── 무기 ────────────────────────────────────────────
+
+// 다음 등급 승급비. 최대 등급이면 null.
+export function weaponTierCost(id, level) {
+  return level >= WEAPONS[id].levels.length ? null : WEAPON_TIER_COSTS[level - 1];
+}
+
+export function buyWeapon(save, id) {
+  if (save.weapons.owned[id]) return { ok: false, reason: '이미 보유 중' };
+  const price = WEAPON_PRICES[id];
+  if (save.coins < price) return { ok: false, reason: '코인 부족' };
+  save.coins -= price;
+  save.weapons.owned[id] = 1;
+  save.weapons.equipped = id;
+  return { ok: true };
+}
+
+export function upgradeWeapon(save, id) {
+  const level = save.weapons.owned[id];
+  if (!level) return { ok: false, reason: '미보유' };
+  const cost = weaponTierCost(id, level);
+  if (cost === null) return { ok: false, reason: '최대 등급' };
+  if (save.coins < cost) return { ok: false, reason: '코인 부족' };
+  save.coins -= cost;
+  save.weapons.owned[id] = level + 1;
+  return { ok: true };
+}
+
+export function equipWeapon(save, id) {
+  if (!save.weapons.owned[id]) return { ok: false, reason: '미보유' };
+  save.weapons.equipped = id;
+  return { ok: true };
+}
+
+// 런 시작 시 들고 들어갈 무기 { id, level }
+export function getEquippedWeapon(save) {
+  const id = save.weapons.equipped;
+  return { id, level: save.weapons.owned[id] };
+}
+
 // ─── 코스튬 ──────────────────────────────────────────
 
 export function buyCostume(save, id) {
@@ -113,7 +154,3 @@ export function equipCostume(save, id) {
   return { ok: true };
 }
 
-export function setGender(save, gender) {
-  save.costumes.gender = gender;
-  return { ok: true };
-}

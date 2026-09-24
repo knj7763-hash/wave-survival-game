@@ -16,8 +16,7 @@ export default class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.typeId = typeId;
     this.isBoss = type.isBoss;
     this.radius = type.radius;
-    this.color = type.color;
-    this.maxHp = Math.round(type.hp * diff.hpMul);
+    this.maxHp = Math.round(type.hp * (this.isBoss ? diff.bossHpMul : diff.hpMul));
     this.hp = this.maxHp;
     // 보스는 패턴 위주라 이동속도 배율을 절반만 적용
     this.speed = type.speed * (this.isBoss ? 1 + (diff.speedMul - 1) / 2 : diff.speedMul);
@@ -25,7 +24,9 @@ export default class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.contactDamage = Math.round(type.contactDamage * diff.damageMul);
     this.xpValue = type.xp;
 
+    this.baseTexture = type.texture;
     this.setTexture(type.texture).setDepth(this.isBoss ? 3 : 1);
+    this.anims.play(`${type.texture}-walk`); // 기본/이동 두 프레임을 번갈아 보여줌 (Assets.js)
     this.body.setCircle(type.radius, this.width / 2 - type.radius, this.height / 2 - type.radius);
     // 보스는 잡몹에 밀리지 않는다
     if (this.isBoss) this.body.pushable = false;
@@ -61,7 +62,7 @@ export default class Enemy extends Phaser.Physics.Arcade.Sprite {
 
     const now = this.scene.time.now;
     this.scene.effects?.onEnemyDamaged(this, dealt, now);
-    this.scene.effects?.burst(this.x, this.y, this.color, 2);
+    this.scene.effects?.hit(this.x, this.y);
     playSfx(this.scene, 'hit', { volume: 0.5, throttleMs: 50 });
 
     this.setTintFill(0xffffff);
@@ -82,11 +83,16 @@ export default class Enemy extends Phaser.Physics.Arcade.Sprite {
     if (this.isBoss) playSfx(this.scene, 'bossDeath');
     else playSfx(this.scene, 'kill', { volume: 0.7, throttleMs: 40 });
 
+    // 쓰러진 모습으로 바꾼 뒤 사라짐
+    this.anims.stop();
+    this.clearTint();
+    this.setTexture(`${this.baseTexture}-dead`).setDepth(0);
     this.scene.tweens.add({
       targets: this,
-      scale: this.isBoss ? 2 : 1.6,
+      scale: this.isBoss ? 1.4 : 1.15,
       alpha: 0,
-      duration: this.isBoss ? 400 : 150,
+      duration: this.isBoss ? 700 : 300,
+      ease: 'Quad.In',
       onComplete: () => this.destroy(),
     });
   }

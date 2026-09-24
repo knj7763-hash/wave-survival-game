@@ -1,4 +1,4 @@
-// 상점 데이터: 보스 재료, 장착 아이템, 강화 확률표, 코스튬
+// 상점 데이터: 보스 재료, 장착 아이템, 강화 확률표, 무기, 코스튬
 
 export const MATERIALS = {
   hair: { name: '보스의 머리털' },
@@ -31,15 +31,37 @@ export const STAT_EFFECT = {
   attackPerPoint: 0.01,
 };
 
-// 코스튬은 외형 전용 (능력치 없음)
-export const COSTUMES = {
-  basic: { name: '기본', price: 0, desc: '기본 지급 캐릭터' },
-  uniform: { name: '교복', price: 200, desc: '흰색·검은색 조합 교복' },
-  swimsuit: { name: '수영복', price: 500, desc: '여름 수영복' },
+// 무기: 하나만 장착해서 런에 들고 들어가고, 런 중에는 바뀌지 않는다 (무기 능력치는 weapons/weaponData.js).
+// price: 구매가 (구매 시 일반 등급). 등급 n → n+1 승급비는 WEAPON_TIER_COSTS[n-1]
+export const WEAPON_PRICES = {
+  gun: 0,
+  sword: 200,
+  knuckle: 200,
+  bow: 250,
+  shotgun: 300,
+  crossbow: 300,
+  laser: 400,
 };
 
-export const GENDERS = { male: '남', female: '여' };
+export const WEAPON_TIER_COSTS = [250, 500];
 
-export function costumeTextureKey(costume, gender) {
-  return `player-${costume}-${gender}`;
+export const DEFAULT_WEAPON = 'gun';
+
+// 코스튬은 외형 전용 (능력치 없음). color: 캐릭터 이미지 색상 (assets/players/alien{color}_*.png)
+export const COSTUMES = {
+  green: { name: '초록 외계인', price: 0, desc: '기본 지급 캐릭터', color: 'Green' },
+  blue: { name: '파랑 외계인', price: 150, desc: '시원한 파란색', color: 'Blue' },
+  pink: { name: '분홍 외계인', price: 250, desc: '상큼한 분홍색', color: 'Pink' },
+  yellow: { name: '노랑 외계인', price: 350, desc: '눈에 띄는 노란색', color: 'Yellow' },
+  beige: { name: '베이지 외계인', price: 500, desc: '차분한 베이지색', color: 'Beige' },
+};
+
+export const DEFAULT_COSTUME = 'green';
+
+// 이전 버전 코스튬(기본/교복/수영복)을 산 저장 데이터는 같은 가격대의 색상으로 옮겨 준다
+export const LEGACY_COSTUMES = { basic: 'green', uniform: 'blue', swimsuit: 'pink' };
+
+// 게임 속 캐릭터 텍스처. big=true면 타이틀/상점 미리보기용 큰 이미지
+export function costumeTextureKey(costume, big = false) {
+  return `player-${costume}${big ? '-big' : ''}`;
 }

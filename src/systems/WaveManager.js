@@ -1,5 +1,6 @@
+import Phaser from 'phaser';
 import {
-  WAVE, WAVE_TYPES, BOSS, STAGE_COUNT, ENEMY, STAGE_CLEAR_HEAL_RATIO,
+  WAVE, WAVE_TYPES, BOSS, STAGE_COUNT, ENEMY, STAGE_CLEAR_HEAL_RATIO, DIFFICULTY, GAME_HEIGHT,
   spawnSideForStage, normalWaveEnemyCount,
 } from '../config.js';
 import { difficultyFor, pickEnemyType } from './Difficulty.js';
@@ -53,10 +54,23 @@ export default class WaveManager {
     this.scene.time.delayedCall(WAVE.introMs, () => this.beginFight());
   }
 
-  spawnMinion() {
+  // y를 생략하면 화면 높이 안에서 무작위
+  spawnMinion(y) {
     if (this.scene.enemies.countActive() >= ENEMY.maxAlive) return false;
-    this.scene.spawnEnemy(pickEnemyType(this.difficulty.mix), this.spawnSide, this.difficulty);
+    this.scene.spawnEnemy(pickEnemyType(this.difficulty.mix), this.spawnSide, this.difficulty, y);
     return true;
+  }
+
+  // 한 무리를 같은 높이 근처에 한꺼번에 등장시킨다. limit: 이번 웨이브에 남은 등장 수. 실제로 나온 수를 반환.
+  spawnRush(size, limit = Infinity) {
+    const spread = WAVE.rushSpreadY;
+    const centerY = Phaser.Math.Between(spread + 30, GAME_HEIGHT - spread - 30);
+    let spawned = 0;
+    while (spawned < Math.min(size, limit)) {
+      if (!this.spawnMinion(centerY + Phaser.Math.Between(-spread, spread))) break;
+      spawned++;
+    }
+    return spawned;
   }
 
   beginFight() {
@@ -65,18 +79,24 @@ export default class WaveManager {
 
     if (this.waveType === 'normal') {
       this.toSpawn = normalWaveEnemyCount(this.stage, this.wave);
-      // 진행할수록 등장 간격이 짧아지고 한 번에 여러 마리가 나온다
+      // 쉴 틈 없이 이어지는 흐름 + 주기적으로 몰려오는 무리 (웨이브 시작과 동시에 첫 무리)
+      // 진행할수록 등장 간격이 짧아지고, 한 번에 나오는 수와 무리 크기가 커진다
+      const rush = () => { this.toSpawn -= this.spawnRush(diff.rushSize, this.toSpawn); };
+      rush();
       this.addTimer(diff.spawnIntervalMs, () => {
         for (let i = 0; i < diff.spawnBatch && this.toSpawn > 0; i++) {
           if (!this.spawnMinion()) break;
           this.toSpawn--;
         }
       });
+      this.addTimer(diff.rushIntervalMs, rush);
       return;
     }
 
     this.boss = this.scene.spawnEnemy(this.waveType, this.spawnSide, diff);
     this.addTimer(diff.minionIntervalMs, () => this.spawnMinion());
+    const bossRush = Math.round(diff.rushSize * DIFFICULTY.bossRushScale);
+    this.addTimer(diff.rushIntervalMs, () => this.spawnRush(bossRush));
   }
 
   // 보스(Boss.startPattern)가 패턴에 진입할 때 호출. 일정 확률로 적 등장 방향이 반대로 바뀐다.
@@ -137,6 +157,7 @@ export default class WaveManager {
     this.scene.time.delayedCall(WAVE.stageBreakMs, () => {
       this.stage++;
       this.waveIndex = 0;
+      this.scene.onStageChanged(this.stage);
       this.setSpawnSide(spawnSideForStage(this.stage), false);
       this.startWave();
     });
