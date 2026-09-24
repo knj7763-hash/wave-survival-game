@@ -34,6 +34,7 @@ export default class TitleScene extends Phaser.Scene {
       const left = i % 2 === 0;
       const e = this.add.sprite(left ? -30 : GAME_WIDTH + 30, Phaser.Math.Between(80, GAME_HEIGHT - 80), 'enemy')
         .setAlpha(0.35).setFlipX(!left).play('enemy-walk'); // 그림이 오른쪽을 바라보므로 오른쪽에서 오는 적만 반전
+      e.anims.timeScale = 0.6; // 천천히 다가오는 속도에 맞춰 걸음도 느리게
       this.tweens.add({
         targets: e, x: cx + (left ? -160 : 160), duration: Phaser.Math.Between(4000, 9000),
         delay: i * 500, repeat: -1,

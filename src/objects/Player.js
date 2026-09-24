@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { PLAYER } from '../config.js';
+import WalkCycle from './WalkCycle.js';
 
 const HIT_POSE_MS = 250; // 피격 시 아파하는 자세를 보여주는 시간
 
@@ -14,6 +15,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     this.baseTexture = texture;
     this.hitPoseUntil = 0;
+    this.walk = new WalkCycle(this, texture);
     // 판정은 몸통 위주로 작게. 텍스처는 기울인 프레임용 여백을 포함하므로 실제 그림 영역(customData.body) 기준으로 잡는다.
     const art = this.texture.customData.body ?? { x: 0, y: 0, w: this.width, h: this.height };
     const bw = Math.round(art.w * HITBOX.w);
@@ -43,22 +45,19 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       (input.down ? 1 : 0) - (input.up ? 1 : 0),
     ).normalize().scale(this.speed);
     this.setVelocity(dir.x, dir.y);
-    // 옆모습 임시 그래픽: 좌우로 움직일 때만 바라보는 방향을 바꾼다 (텍스처는 오른쪽을 바라봄)
+    // 좌우로 움직일 때만 바라보는 방향을 바꾼다 (그림은 오른쪽을 바라봄). 위아래로만 움직이면 방향 유지
     if (dir.x !== 0) this.setFlipX(dir.x < 0);
     this.updatePose(dir.lengthSq() > 0);
   }
 
-  // 피격 자세 > 걷기 애니메이션 > 서 있기
+  // 피격 자세 > 걷기/정지 애니메이션 (WalkCycle)
   updatePose(moving) {
     if (this.scene.time.now < this.hitPoseUntil) {
       this.anims.stop();
-      this.setTexture(`${this.baseTexture}-hit`);
-    } else if (moving) {
-      this.anims.play(`${this.baseTexture}-walk`, true);
-    } else {
-      this.anims.stop();
-      this.setTexture(this.baseTexture);
+      this.setAngle(0).setTexture(`${this.baseTexture}-hit`);
+      return;
     }
+    this.walk.update(moving, this.speed);
   }
 
   get isDead() {

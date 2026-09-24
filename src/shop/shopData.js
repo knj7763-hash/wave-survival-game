@@ -66,11 +66,11 @@ export function costumeTextureKey(costume, big = false) {
   return `player-${costume}${big ? '-big' : ''}`;
 }
 
-// 플레이어 캐릭터 (학생). file: public/assets/school/의 이미지 이름.
+// 플레이어 캐릭터 (학생). file: 기본 포즈, walk: 걷기 그림 [a, b] (public/assets/school/의 이미지 이름).
 // 지금은 남학생 고정이고, 성별 선택 UI는 추후 추가 (저장 데이터 save.character로 전환).
 export const PLAYER_CHARACTERS = {
-  boy: { name: '남학생', file: 'player_boy' },
-  girl: { name: '여학생', file: 'player_girl' },
+  boy: { name: '남학생', file: 'player_boy', walk: ['player_boy_walk_a', 'player_boy_walk_b'] },
+  girl: { name: '여학생', file: 'player_girl', walk: ['player_girl_walk_a', 'player_girl_walk_b'] },
 };
 
 export const DEFAULT_CHARACTER = 'boy';
