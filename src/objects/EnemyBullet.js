@@ -1,5 +1,4 @@
 import Phaser from 'phaser';
-import { GAME_WIDTH, GAME_HEIGHT } from '../config.js';
 
 const OFFSCREEN_MARGIN = 60;
 
@@ -15,9 +14,7 @@ export default class EnemyBullet extends Phaser.Physics.Arcade.Image {
 
   // 그룹의 runChildUpdate로 매 프레임 호출
   update() {
-    if (this.x < -OFFSCREEN_MARGIN || this.x > GAME_WIDTH + OFFSCREEN_MARGIN ||
-        this.y < -OFFSCREEN_MARGIN || this.y > GAME_HEIGHT + OFFSCREEN_MARGIN) {
-      this.destroy();
-    }
+    // 카메라에 보이는 영역을 벗어나면 제거 (탑다운 무한 월드라 화면 좌표가 아닌 카메라 기준)
+    if (!this.scene.viewRect(OFFSCREEN_MARGIN).contains(this.x, this.y)) this.destroy();
   }
 }

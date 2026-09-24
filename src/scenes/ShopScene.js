@@ -15,7 +15,8 @@ import {
   buyCostume, equipCostume,
 } from '../shop/shopLogic.js';
 
-const TABS = { weapons: '무기', skills: '스킬', items: '장비 강화', costumes: '코스튬' };
+// 코스튬 탭(renderCostumes)은 교복 베리에이션 그림이 준비될 때까지 숨김. 다시 열려면 costumes: '코스튬'을 추가.
+const TABS = { weapons: '무기', skills: '스킬', items: '장비 강화' };
 const CARD_W = 340;
 const CARD_H = 400;
 const CARD_TOP = 175;

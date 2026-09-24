@@ -34,8 +34,9 @@ export default class Effects {
     });
     this.damageNumbers = 0;
 
+    // 화면 전체를 덮는 피격 표시는 카메라가 움직여도 화면에 고정
     this.hurtOverlay = scene.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0xff1744, 0)
-      .setOrigin(0).setDepth(9);
+      .setOrigin(0).setDepth(9).setScrollFactor(0);
   }
 
   // 타격 불꽃

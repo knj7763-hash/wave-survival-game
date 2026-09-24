@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT, FONT_FAMILY, STORAGE_KEYS } from '../config.js';
-import { loadSave } from '../systems/SaveData.js';
-import { costumeTextureKey } from '../shop/shopData.js';
-import { backgroundKey, BACKGROUND_TINT } from '../systems/Assets.js';
+import { loadSave, writeSave } from '../systems/SaveData.js';
+import { characterTextureKey, PLAYER_CHARACTERS } from '../shop/shopData.js';
+import { setCharacter } from '../shop/shopLogic.js';
+import { groundKey, groundOf } from '../systems/Assets.js';
 import { createButton } from '../ui/Button.js';
 
 const TEXT = { fontFamily: FONT_FAMILY, color: '#ffffff' };
@@ -24,21 +25,22 @@ export default class TitleScene extends Phaser.Scene {
     const cx = GAME_WIDTH / 2;
     const save = loadSave();
     this.cameras.main.setBackgroundColor('#141824');
-    this.add.image(0, GAME_HEIGHT, backgroundKey(1)).setOrigin(0, 1).setDisplaySize(GAME_WIDTH, GAME_WIDTH).setTint(BACKGROUND_TINT);
-    this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x0d1017, 0.45).setOrigin(0);
+    // 배경: 게임과 같은 복도 바닥을 어둡게 깔아 둔다
+    this.add.tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, groundKey(1)).setOrigin(0).setTileScale(groundOf(1).tileScale);
+    this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x0d1017, 0.6).setOrigin(0);
 
     // 배경: 양쪽 가장자리에서 다가오는 적 실루엣
     for (let i = 0; i < 14; i++) {
       const left = i % 2 === 0;
       const e = this.add.sprite(left ? -30 : GAME_WIDTH + 30, Phaser.Math.Between(80, GAME_HEIGHT - 80), 'enemy')
-        .setAlpha(0.35).setFlipX(left).play('enemy-walk');
+        .setAlpha(0.35).setFlipX(!left).play('enemy-walk'); // 그림이 오른쪽을 바라보므로 오른쪽에서 오는 적만 반전
       this.tweens.add({
         targets: e, x: cx + (left ? -160 : 160), duration: Phaser.Math.Between(4000, 9000),
         delay: i * 500, repeat: -1,
       });
     }
 
-    this.add.image(cx, 150, costumeTextureKey(save.costumes.equipped, true));
+    this.characterImage = this.add.image(cx, 135, characterTextureKey(save.character, true));
     this.add.text(cx, 275, '웨이브 서바이벌', {
       ...TEXT, fontSize: '64px', stroke: '#000000', strokeThickness: 8,
     }).setOrigin(0.5);
@@ -67,6 +69,19 @@ export default class TitleScene extends Phaser.Scene {
     this.add.text(cx, 640, 'Enter 키로도 시작할 수 있어요', { ...TEXT, fontSize: '14px', color: '#6b7488' }).setOrigin(0.5);
     this.input.keyboard.once('keydown-ENTER', () => this.startGame());
     this.input.keyboard.once('keydown-SPACE', () => this.startGame());
+
+    // 개발용 (npm run dev에서만): G 키로 남학생/여학생 전환 (성별 선택 UI를 만들기 전 확인용)
+    if (import.meta.env.DEV) {
+      this.add.text(GAME_WIDTH - 16, GAME_HEIGHT - 16, 'G 캐릭터 전환 (개발용)', { ...TEXT, fontSize: '12px', color: '#6b7488' })
+        .setOrigin(1, 1);
+      this.input.keyboard.on('keydown-G', () => {
+        const save = loadSave();
+        const ids = Object.keys(PLAYER_CHARACTERS);
+        setCharacter(save, ids[(ids.indexOf(save.character) + 1) % ids.length]);
+        writeSave(save);
+        this.characterImage.setTexture(characterTextureKey(save.character, true));
+      });
+    }
   }
 
   startGame() {

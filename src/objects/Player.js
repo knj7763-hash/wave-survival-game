@@ -3,7 +3,9 @@ import { PLAYER } from '../config.js';
 
 const HIT_POSE_MS = 250; // 피격 시 아파하는 자세를 보여주는 시간
 
-// texture: 코스튬 텍스처 키 (서 있는 자세). `${texture}-walk` 애니메이션과 `${texture}-hit` 프레임을 함께 쓴다.
+const HITBOX = { w: 0.6, h: 0.55 }; // 그림 영역 대비 충돌 판정 비율: 큰 머리는 빼고 몸통~발
+
+// texture: 캐릭터 텍스처 키 (서 있는 자세). `${texture}-walk` 애니메이션과 `${texture}-hit` 프레임을 함께 쓴다.
 export default class Player extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y, texture) {
     super(scene, x, y, texture);
@@ -12,11 +14,16 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     this.baseTexture = texture;
     this.hitPoseUntil = 0;
-    this.setCollideWorldBounds(true);
-    // 판정은 몸통 위주로 작게 (머리 윗부분과 발끝 제외)
-    const bw = Math.round(this.width * 0.55);
-    const bh = Math.round(this.height * 0.7);
-    this.body.setSize(bw, bh).setOffset((this.width - bw) / 2, this.height - bh - 2);
+    // 판정은 몸통 위주로 작게. 텍스처는 기울인 프레임용 여백을 포함하므로 실제 그림 영역(customData.body) 기준으로 잡는다.
+    const art = this.texture.customData.body ?? { x: 0, y: 0, w: this.width, h: this.height };
+    const bw = Math.round(art.w * HITBOX.w);
+    const bh = Math.round(art.h * HITBOX.h);
+    this.body.setSize(bw, bh).setOffset(art.x + (art.w - bw) / 2, art.y + art.h - bh);
+
+    // 발밑 표시: 교복 입은 좀비 무리 속에서도 내 캐릭터를 바로 찾을 수 있게 (캐릭터 아래, 장판 위에 깐다)
+    this.feetOffsetY = art.y + art.h - this.height / 2;
+    this.marker = scene.add.ellipse(x, y + this.feetOffsetY, art.w * 1.3, art.w * 0.5)
+      .setStrokeStyle(2, 0x1de9b6, 0.9).setFillStyle(0x1de9b6, 0.18).setDepth(-0.5);
 
     this.maxHp = PLAYER.maxHp;
     this.hp = this.maxHp;
@@ -24,13 +31,20 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.invincibleUntil = 0;
   }
 
-  // 화면 전체 상하좌우 자유 이동. 대각선 이동 속도는 정규화한다.
+  preUpdate(time, delta) {
+    super.preUpdate(time, delta);
+    this.marker.setPosition(this.x, this.y + this.feetOffsetY);
+  }
+
+  // 탑다운 무한 월드에서 상하좌우 자유 이동 (카메라가 따라온다). 대각선 이동 속도는 정규화한다.
   move(input) {
     const dir = new Phaser.Math.Vector2(
       (input.right ? 1 : 0) - (input.left ? 1 : 0),
       (input.down ? 1 : 0) - (input.up ? 1 : 0),
     ).normalize().scale(this.speed);
     this.setVelocity(dir.x, dir.y);
+    // 옆모습 임시 그래픽: 좌우로 움직일 때만 바라보는 방향을 바꾼다 (텍스처는 오른쪽을 바라봄)
+    if (dir.x !== 0) this.setFlipX(dir.x < 0);
     this.updatePose(dir.lengthSq() > 0);
   }
 
@@ -45,11 +59,6 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this.anims.stop();
       this.setTexture(this.baseTexture);
     }
-  }
-
-  // 적이 오는 방향을 바라보도록 스프라이트를 좌우 반전한다.
-  faceSide(side) {
-    this.setFlipX(side === 'left');
   }
 
   get isDead() {

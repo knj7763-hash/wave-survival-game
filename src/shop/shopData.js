@@ -61,7 +61,21 @@ export const DEFAULT_COSTUME = 'green';
 // 이전 버전 코스튬(기본/교복/수영복)을 산 저장 데이터는 같은 가격대의 색상으로 옮겨 준다
 export const LEGACY_COSTUMES = { basic: 'green', uniform: 'blue', swimsuit: 'pink' };
 
-// 게임 속 캐릭터 텍스처. big=true면 타이틀/상점 미리보기용 큰 이미지
+// 상점 코스튬 탭 미리보기용 외계인 텍스처. big=true면 큰 이미지
 export function costumeTextureKey(costume, big = false) {
   return `player-${costume}${big ? '-big' : ''}`;
+}
+
+// 플레이어 캐릭터 (학생). file: public/assets/school/의 이미지 이름.
+// 지금은 남학생 고정이고, 성별 선택 UI는 추후 추가 (저장 데이터 save.character로 전환).
+export const PLAYER_CHARACTERS = {
+  boy: { name: '남학생', file: 'player_boy' },
+  girl: { name: '여학생', file: 'player_girl' },
+};
+
+export const DEFAULT_CHARACTER = 'boy';
+
+// 게임 속 캐릭터 텍스처 (`${key}-walk` 애니메이션과 `${key}-hit` 프레임을 함께 쓴다). big=true면 타이틀용 큰 이미지
+export function characterTextureKey(character, big = false) {
+  return `char-${character}${big ? '-big' : ''}`;
 }

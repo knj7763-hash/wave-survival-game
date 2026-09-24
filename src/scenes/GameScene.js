@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import {
   GAME_WIDTH, GAME_HEIGHT, FONT_FAMILY, LEVEL_UP, WAVE_TYPES, ENEMY_TYPES,
-  COIN_REWARDS, xpToNextLevel, STORAGE_KEYS,
+  COIN_REWARDS, xpToNextLevel, STORAGE_KEYS, CAMERA, SPAWN,
 } from '../config.js';
 import Player from '../objects/Player.js';
 import Enemy, { ENEMY_EVENTS } from '../objects/Enemy.js';
@@ -16,16 +16,17 @@ import SkillManager from '../systems/SkillManager.js';
 import SkillBar from '../ui/SkillBar.js';
 import { createButton } from '../ui/Button.js';
 import { loadSave, writeSave } from '../systems/SaveData.js';
-import { backgroundKey, BACKGROUND_TINT } from '../systems/Assets.js';
+import Parallax, { stageLayers } from '../systems/Parallax.js';
 import { getLoadout, getItemStats, getEquippedWeapon } from '../shop/shopLogic.js';
-import { MATERIALS, costumeTextureKey } from '../shop/shopData.js';
+import { MATERIALS, characterTextureKey } from '../shop/shopData.js';
 import { TIER_NAMES } from '../weapons/weaponData.js';
 import { WEAPON_CLASSES } from '../weapons/weaponTypes.js';
 import LevelUpEffects from '../effects/LevelUpEffects.js';
 import { MAX_OWNED_EFFECTS } from '../effects/effectData.js';
 
-const SPAWN_MARGIN = 24; // 화면 밖에서 등장하도록 가장자리 바깥 거리
 const BOSS_BAR_W = 500;
+const BOSS_ARROW_MARGIN = 36; // 화면 밖 보스를 가리키는 화살표와 화면 가장자리 사이 거리
+const RELOCATE_SPREAD = 0.6; // 멀어진 적을 다시 배치할 때 진행 방향에서 벗어나는 최대 각도 (rad)
 const HEART_HP = 10; // 하트 1개 = 체력 10 (반 칸 = 5)
 const BG_DIM = 0.35; // 캐릭터와 경고 표시가 잘 보이도록 배경을 어둡게 덮는 정도
 const BOSS_NAMES = { miniboss: '준보스', boss: 'BOSS' };
@@ -42,8 +43,7 @@ export default class GameScene extends Phaser.Scene {
     this.weaponLoadout = getEquippedWeapon(save);
     this.loadout = getLoadout(save);
     this.playerStats = getItemStats(save);
-    this.costume = save.costumes.equipped;
-    this.playerTexture = costumeTextureKey(this.costume);
+    this.playerTexture = characterTextureKey(save.character);
     // 이번 런에서 얻은 보상 (런 종료 시 저장)
     this.runCoins = { kills: 0, waves: 0, record: 0 };
     this.runMaterials = {};
@@ -61,13 +61,15 @@ export default class GameScene extends Phaser.Scene {
   create() {
     this.waves = new WaveManager(this, this.startStage);
 
+    // 탑다운 무한 월드: 플레이어는 원점에서 시작하고 카메라가 따라간다 (중앙 부근 데드존 안에서는 카메라 고정)
+    this.player = new Player(this, 0, 0, this.playerTexture);
+    this.cameras.main
+      .startFollow(this.player, true, CAMERA.lerp, CAMERA.lerp)
+      .setDeadzone(CAMERA.deadzoneW, CAMERA.deadzoneH)
+      .centerOn(0, 0);
+
     this.drawBackground();
     this.effects = new Effects(this);
-    this.edgeIndicator = this.add.graphics();
-    this.drawEdgeIndicator(this.waves.spawnSide);
-
-    this.player = new Player(this, GAME_WIDTH / 2, GAME_HEIGHT / 2, this.playerTexture);
-    this.player.faceSide(this.waves.spawnSide);
 
     this.enemies = this.physics.add.group({ classType: Enemy });
     this.physics.add.collider(this.enemies, this.enemies);
@@ -129,9 +131,12 @@ export default class GameScene extends Phaser.Scene {
     });
 
     for (const enemy of this.enemies.getChildren()) {
-      if (enemy.active) enemy.chase(this.player, time);
+      if (!enemy.active) continue;
+      this.relocateIfFar(enemy);
+      enemy.chase(this.player, time);
     }
 
+    this.parallax.update(delta);
     this.weapon.update(time);
     this.levelUpEffects.update(delta);
     this.skills.update(delta, time);
@@ -145,14 +150,11 @@ export default class GameScene extends Phaser.Scene {
 
   // ─── 적 ──────────────────────────────────────────────
 
-  // diff: difficultyFor(stage, wave) 결과 (체력/속도/공격력 배율). y를 생략하면 무작위 높이.
-  spawnEnemy(typeId, side, diff, y) {
+  // diff: difficultyFor(stage, wave) 결과 (체력/속도/공격력 배율).
+  // along: 화면 바깥 둘레 위의 등장 위치 (0~1, spawnPoint 참고). 생략하면 사방 중 무작위.
+  spawnEnemy(typeId, diff, along = Math.random()) {
     const type = ENEMY_TYPES[typeId];
-    const offset = SPAWN_MARGIN + type.radius;
-    const x = side === 'left' ? -offset : GAME_WIDTH + offset;
-    if (type.isBoss) y = GAME_HEIGHT / 2;
-    else if (y === undefined) y = Phaser.Math.Between(SPAWN_MARGIN, GAME_HEIGHT - SPAWN_MARGIN);
-    else y = Phaser.Math.Clamp(y, SPAWN_MARGIN, GAME_HEIGHT - SPAWN_MARGIN);
+    const { x, y } = this.spawnPoint(along, type.radius);
     if (type.isBoss) {
       const boss = new Boss(this, x, y);
       this.enemies.add(boss, true);
@@ -160,6 +162,56 @@ export default class GameScene extends Phaser.Scene {
     }
     // get()은 사라지는 중인(비활성) 적을 재사용할 수 있으므로 항상 새로 만든다.
     return this.enemies.create(x, y).setup(typeId, diff);
+  }
+
+  // 지금 카메라에 보이는 월드 영역. pad만큼 사방으로 넓힌다.
+  viewRect(pad = 0) {
+    const cam = this.cameras.main;
+    return new Phaser.Geom.Rectangle(cam.scrollX - pad, cam.scrollY - pad, cam.width + pad * 2, cam.height + pad * 2);
+  }
+
+  // 화면 바깥 사각형 둘레 위의 점. along은 둘레를 따라 0~1 (위 → 오른쪽 → 아래 → 왼쪽 순서),
+  // 범위를 벗어나면 한 바퀴 돌아 이어진다. extra: 적 몸집 반경 등 추가로 더 바깥에 둘 거리.
+  spawnPoint(along, extra = 0) {
+    const view = this.viewRect(SPAWN.margin + extra);
+    const { width: w, height: h } = view;
+    let d = Phaser.Math.Wrap(along, 0, 1) * 2 * (w + h);
+    if (d < w) return { x: view.x + d, y: view.y };
+    d -= w;
+    if (d < h) return { x: view.right, y: view.y + d };
+    d -= h;
+    if (d < w) return { x: view.right - d, y: view.bottom };
+    d -= w;
+    return { x: view.x, y: view.bottom - d };
+  }
+
+  // 등장 둘레의 전체 길이 (px). 둘레 위 거리를 along 단위로 바꿀 때 쓴다.
+  spawnPerimeter() {
+    const view = this.viewRect(SPAWN.margin);
+    return 2 * (view.width + view.height);
+  }
+
+  // 화면 중앙에서 angle 방향으로 뻗은 선이 화면 바깥 둘레와 만나는 점
+  edgePoint(angle, extra = 0) {
+    const view = this.viewRect(SPAWN.margin + extra);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const t = Math.min(view.width / 2 / Math.abs(cos || 1e-6), view.height / 2 / Math.abs(sin || 1e-6));
+    return { x: view.centerX + cos * t, y: view.centerY + sin * t };
+  }
+
+  // 플레이어에게서 너무 멀어진 적은 진행 방향 앞쪽 화면 밖으로 옮긴다 (계속 도망만 다닐 수 없게).
+  // 보스는 패턴 중에는 경고 표시 위치가 어긋나지 않도록 추격 중일 때만 옮긴다.
+  relocateIfFar(enemy) {
+    const { player } = this;
+    if (Phaser.Math.Distance.Between(enemy.x, enemy.y, player.x, player.y) < SPAWN.relocateDistance) return;
+    if (enemy.isBoss && enemy.state !== 'chase') return;
+    const v = player.body.velocity;
+    const heading = v.lengthSq() > 1
+      ? Math.atan2(v.y, v.x)
+      : Phaser.Math.Angle.Between(player.x, player.y, enemy.x, enemy.y);
+    const { x, y } = this.edgePoint(heading + Phaser.Math.FloatBetween(-RELOCATE_SPREAD, RELOCATE_SPREAD), enemy.radius);
+    enemy.setPosition(x, y);
   }
 
   clearEnemyBullets() {
@@ -231,24 +283,6 @@ export default class GameScene extends Phaser.Scene {
     playSfx(this, 'hurt');
     if (this.player.isDead) this.gameOver();
     return true;
-  }
-
-  // 웨이브 매니저가 등장 방향을 바꿀 때 호출 (스테이지 전환 또는 보스 방향 전환)
-  onSpawnSideChanged(side, isBossFlip) {
-    this.drawEdgeIndicator(side);
-    this.player.faceSide(side);
-
-    this.tweens.add({
-      targets: this.edgeIndicator, alpha: 0.2, duration: 150, yoyo: true, repeat: 3,
-      onComplete: () => this.edgeIndicator.setAlpha(1),
-    });
-
-    if (isBossFlip) {
-      const dir = side === 'left' ? '◀ 이제 적이 왼쪽에서 옵니다' : '이제 적이 오른쪽에서 옵니다 ▶';
-      this.showBanner('⚠ 방향 전환!', dir, '#ff8a65');
-      this.cameras.main.flash(250, 255, 80, 60);
-      playSfx(this, 'alarm');
-    }
   }
 
   // ─── 스킬 ───────────────────────────────────────────
@@ -395,26 +429,39 @@ export default class GameScene extends Phaser.Scene {
 
   // ─── 화면 표시 ───────────────────────────────────────
 
-  // 스테이지별 배경 (정사각형 원본을 가로에 맞추고 아래쪽 땅 부분이 보이게 배치)
+  // fn 안에서 새로 만든 표시 객체를 모두 화면에 고정한다 (카메라가 움직여도 제자리인 HUD/안내/결과 화면).
+  // 컨테이너는 자식까지 고정한다: 클릭 판정은 자식 자신의 scrollFactor를 쓰므로 버튼이 눌리려면 필요하다.
+  // (Phaser 3.90의 Container.setScrollFactor(x, y, true)는 자식 값을 바꾸지 못해서 직접 내려간다)
+  fixedToScreen(fn) {
+    const before = new Set(this.children.list);
+    const result = fn();
+    const pin = (obj) => {
+      obj.setScrollFactor?.(0);
+      obj.list?.forEach(pin);
+    };
+    for (const obj of this.children.list) {
+      if (!before.has(obj)) pin(obj);
+    }
+    return result;
+  }
+
+  // 스테이지별 탑다운 패럴랙스 바닥 + 캐릭터와 경고 표시가 잘 보이도록 어둡게 덮는 층
   drawBackground() {
-    this.background = this.add.image(0, GAME_HEIGHT, backgroundKey(this.waves.stage))
-      .setOrigin(0, 1).setDisplaySize(GAME_WIDTH, GAME_WIDTH).setTint(BACKGROUND_TINT).setDepth(-10);
-    this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x0d1017, BG_DIM).setOrigin(0).setDepth(-9);
+    this.parallax = new Parallax(this, stageLayers(this.waves.stage));
+    this.fixedToScreen(() => this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x0d1017, BG_DIM).setOrigin(0).setDepth(-9));
   }
 
   // 웨이브 매니저가 다음 스테이지로 넘어갈 때 호출
   onStageChanged(stage) {
-    this.background.setTexture(backgroundKey(stage)).setDisplaySize(GAME_WIDTH, GAME_WIDTH);
-  }
-
-  // 적이 등장하는 쪽 가장자리를 붉게 표시
-  drawEdgeIndicator(side) {
-    const edgeX = side === 'left' ? 0 : GAME_WIDTH - 10;
-    this.edgeIndicator.clear().fillStyle(0xff3b3b, 0.35).fillRect(edgeX, 0, 10, GAME_HEIGHT);
+    this.parallax.setLayers(stageLayers(stage));
   }
 
   // 화면 위쪽 중앙에 잠깐 떠오르는 안내 문구
   showBanner(title, sub, color) {
+    this.fixedToScreen(() => this.createBanner(title, sub, color));
+  }
+
+  createBanner(title, sub, color) {
     this.banner?.destroy();
     const base = { fontFamily: FONT_FAMILY, color: '#ffffff' };
     const titleText = this.add.text(0, 0, title, { ...base, fontSize: '48px', color, stroke: '#000000', strokeThickness: 6 })
@@ -431,11 +478,16 @@ export default class GameScene extends Phaser.Scene {
   }
 
   createHud() {
+    this.fixedToScreen(() => this.buildHud());
+    this.updateHud();
+  }
+
+  buildHud() {
     // 배경 그림 위에서도 읽히도록 외곽선을 둔다
     const style = { fontFamily: FONT_FAMILY, fontSize: '20px', color: '#ffffff', stroke: '#000000', strokeThickness: 3 };
 
     // 체력: 캐릭터 얼굴 + 하트 (하트 1개 = 체력 10)
-    this.add.image(38, 36, `hud-player-${this.costume}`).setDepth(10);
+    this.add.image(38, 36, `hud-${this.playerTexture}`).setDepth(10);
     this.hearts = [];
     for (let i = 0; i < Math.ceil(this.player.maxHp / HEART_HP); i++) {
       this.hearts.push(this.add.image(74 + i * 26, 26, 'hud-heart-full').setDepth(10));
@@ -483,7 +535,9 @@ export default class GameScene extends Phaser.Scene {
       onToggleAuto: () => this.toggleSkillAuto(),
     });
 
-    this.updateHud();
+    // 화면 밖에 있는 준보스/보스 방향을 가장자리에서 가리키는 화살표 (오른쪽을 향하게 그리고 회전)
+    this.bossArrow = this.add.triangle(0, 0, 0, -12, 24, 0, 0, 12, 0xff5252)
+      .setStrokeStyle(2, 0x000000).setDepth(10).setVisible(false);
   }
 
   updateHud() {
@@ -503,11 +557,11 @@ export default class GameScene extends Phaser.Scene {
     this.xpBar.width = GAME_WIDTH * Math.min(1, this.xp / need);
     this.levelText.setText(`Lv ${this.level}   EXP ${this.xp} / ${need}`);
 
-    const { stage, wave, waveType, spawnSide, state, boss } = this.waves;
-    const arrow = spawnSide === 'left' ? '◀ 왼쪽' : '오른쪽 ▶';
-    this.stageText.setText(`STAGE ${stage}  ·  WAVE ${wave} / ${WAVE_TYPES.length}  ·  적 등장: ${arrow}`);
+    const { stage, wave, waveType, state, boss } = this.waves;
+    this.stageText.setText(`STAGE ${stage}  ·  WAVE ${wave} / ${WAVE_TYPES.length}`);
 
     const showBoss = state === 'fighting' && boss?.active;
+    this.updateBossArrow(showBoss ? boss : null);
     this.bossBarBg.setVisible(showBoss);
     this.bossBar.setVisible(showBoss);
     if (showBoss) {
@@ -520,7 +574,28 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  showResult(title, color, { bestMs, isNewRecord }, totalCoins) {
+  // 보스가 화면 밖이면 화면 중앙→보스 방향으로 가장자리에 화살표를 띄운다
+  updateBossArrow(boss) {
+    const cam = this.cameras.main;
+    const view = this.viewRect();
+    const offscreen = boss && !Phaser.Geom.Rectangle.Contains(view, boss.x, boss.y);
+    this.bossArrow.setVisible(!!offscreen);
+    if (!offscreen) return;
+
+    const angle = Phaser.Math.Angle.Between(view.centerX, view.centerY, boss.x, boss.y);
+    const halfW = cam.width / 2 - BOSS_ARROW_MARGIN;
+    const halfH = cam.height / 2 - BOSS_ARROW_MARGIN;
+    const t = Math.min(halfW / Math.abs(Math.cos(angle) || 1e-6), halfH / Math.abs(Math.sin(angle) || 1e-6));
+    const blink = 0.6 + 0.4 * Math.sin(this.time.now / 120);
+    this.bossArrow.setPosition(cam.width / 2 + Math.cos(angle) * t, cam.height / 2 + Math.sin(angle) * t)
+      .setRotation(angle).setAlpha(blink);
+  }
+
+  showResult(...args) {
+    this.fixedToScreen(() => this.createResult(...args));
+  }
+
+  createResult(title, color, { bestMs, isNewRecord }, totalCoins) {
     const cx = GAME_WIDTH / 2;
     const cy = GAME_HEIGHT / 2;
     const base = { fontFamily: FONT_FAMILY, color: '#ffffff' };

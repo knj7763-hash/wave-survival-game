@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
 import Enemy from './Enemy.js';
-import { BOSS_AI, GAME_WIDTH, GAME_HEIGHT } from '../config.js';
+import { BOSS_AI } from '../config.js';
 import { playSfx } from '../systems/Sound.js';
 
 const PLAYER_HIT_RADIUS = 12; // 광역 공격 판정 시 더해 주는 플레이어 몸집
 const WARN_COLOR = 0xff1744;
 const SCREEN_MARGIN = 80; // 낙뢰가 떨어질 수 있는 화면 가장자리 여백
+const MISSILE_POSITION_DIST = 280; // 미사일 패턴: 보스가 자리 잡는 플레이어와의 거리
 
 // 설정값이 [min, max]면 그 범위에서 무작위, 숫자면 그대로
 function randomMs(value) {
@@ -35,7 +36,7 @@ export default class Boss extends Enemy {
         break;
       case 'slowChase':
         this.scene.physics.moveToObject(this, target, this.speed * BOSS_AI.lightning.chaseSpeedScale);
-        this.setFlipX(this.body.velocity.x > 0);
+        this.faceToward(this.body.velocity.x);
         break;
       case 'hold':
       case 'scripted':
@@ -45,16 +46,12 @@ export default class Boss extends Enemy {
     }
   }
 
-  // 보스(톱날)는 늘 회전하고 돌진할 때 더 빨리 돈다. 준보스는 패턴을 준비/실행하는 동안 공격 자세.
+  // 패턴을 준비/실행하는 동안은 붉은 기운을 두른 공격 자세 (추격 중엔 걷기 애니메이션)
   updateLook() {
-    if (this.typeId === 'boss') {
-      this.rotation += this.state === 'dash' ? 0.5 : 0.12;
-      return;
-    }
     const attacking = this.state !== 'chase';
     if (attacking && !this.attackPose) {
       this.anims.stop();
-      this.setTexture(`${this.baseTexture}-move`); // 바나클의 이동 프레임 = 입을 벌린 공격 자세
+      this.setTexture(`${this.baseTexture}-attack`);
     } else if (!attacking && this.attackPose) {
       this.anims.play(`${this.baseTexture}-walk`);
     }
@@ -72,9 +69,6 @@ export default class Boss extends Enemy {
     const options = this.ai.patterns.filter((p) => p !== this.lastPattern);
     const pattern = Phaser.Utils.Array.GetRandom(options);
     this.lastPattern = pattern;
-
-    // 보스만 패턴 진입 시 무작위 방향 전환 (준보스는 없음)
-    if (this.typeId === 'boss') this.scene.waves.onBossPatternStart();
 
     const run = {
       dash: this.patternDash,
@@ -101,7 +95,7 @@ export default class Boss extends Enemy {
     const aimY = player.y + player.body.velocity.y * cfg.aimLead;
     const angle = Phaser.Math.Angle.Between(this.x, this.y, aimX, aimY);
     this.state = 'hold';
-    this.setFlipX(Math.cos(angle) > 0);
+    this.faceToward(Math.cos(angle));
     playSfx(this.scene, 'dashWarn');
 
     // 돌진 방향 경고선 (깜빡임)
@@ -187,12 +181,15 @@ export default class Boss extends Enemy {
     });
   }
 
-  // ─── 패턴: 중앙 이동 후 전방위 미사일 (보스) ──────────────
+  // ─── 패턴: 플레이어 근처로 이동 후 전방위 미사일 (보스) ─────────
 
+  // 탑다운 무한 월드라 화면 중앙 대신, 지금 있는 쪽에서 플레이어와 일정 거리만큼 떨어진 지점으로 이동한다
   patternMissiles() {
     const cfg = BOSS_AI.missiles;
-    const cx = GAME_WIDTH / 2;
-    const cy = GAME_HEIGHT / 2;
+    const player = this.scene.player;
+    const side = Phaser.Math.Angle.Between(player.x, player.y, this.x, this.y);
+    const cx = player.x + Math.cos(side) * MISSILE_POSITION_DIST;
+    const cy = player.y + Math.sin(side) * MISSILE_POSITION_DIST;
     const dist = Phaser.Math.Distance.Between(this.x, this.y, cx, cy);
 
     this.state = 'scripted';
@@ -239,12 +236,13 @@ export default class Boss extends Enemy {
     const player = this.scene.player;
     this.state = 'slowChase';
 
-    // 한 곳은 플레이어 현재 위치, 나머지는 무작위
+    // 한 곳은 플레이어 현재 위치, 나머지는 지금 화면 안 무작위
+    const view = this.scene.viewRect(-SCREEN_MARGIN);
     const spots = [{ x: player.x, y: player.y }];
     for (let i = 1; i < cfg.strikes; i++) {
       spots.push({
-        x: Phaser.Math.Between(SCREEN_MARGIN, GAME_WIDTH - SCREEN_MARGIN),
-        y: Phaser.Math.Between(SCREEN_MARGIN, GAME_HEIGHT - SCREEN_MARGIN),
+        x: Phaser.Math.Between(view.left, view.right),
+        y: Phaser.Math.Between(view.top, view.bottom),
       });
     }
 
@@ -277,10 +275,10 @@ export default class Boss extends Enemy {
   }
 
   strike(spot, cfg) {
-    // 하늘에서 내려꽂히는 지그재그 번개
+    // 하늘(화면 위쪽 끝)에서 내려꽂히는 지그재그 번개
     const g = this.scene.add.graphics().setDepth(7);
     const points = [];
-    for (let y = -20, i = 0; y < spot.y; y += 50, i++) {
+    for (let y = this.scene.viewRect().top - 20, i = 0; y < spot.y; y += 50, i++) {
       points.push(new Phaser.Math.Vector2(spot.x + (i % 2 ? 14 : -14), y));
     }
     points.push(new Phaser.Math.Vector2(spot.x, spot.y));

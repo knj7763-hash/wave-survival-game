@@ -34,13 +34,14 @@ export const ENEMY = {
 };
 
 // 적 종류별 기본 능력치 (DIFFICULTY 배율이 곱해짐). radius는 충돌 반경(px), xp는 처치 시 경험치.
+// radius는 그림의 몸통 폭에 맞춘다 (뻗은 팔은 제외). 기본 좀비 그림 폭 37px → 15.
 // texture의 이미지와 크기는 systems/Assets.js의 ENEMY_SPRITES에서 정한다.
 export const ENEMY_TYPES = {
-  normal: { texture: 'enemy', hp: 20, speed: 95, contactDamage: 12, radius: 14, xp: 1, isBoss: false },
-  runner: { texture: 'enemy-runner', hp: 14, speed: 165, contactDamage: 9, radius: 11, xp: 1, isBoss: false },
+  normal: { texture: 'enemy', hp: 20, speed: 95, contactDamage: 12, radius: 15, xp: 1, isBoss: false },
+  runner: { texture: 'enemy-runner', hp: 14, speed: 165, contactDamage: 9, radius: 12, xp: 1, isBoss: false },
   tank: { texture: 'enemy-tank', hp: 110, speed: 65, contactDamage: 20, radius: 20, xp: 3, isBoss: false },
-  miniboss: { texture: 'miniboss', hp: 750, speed: 90, contactDamage: 22, radius: 28, xp: 15, isBoss: true },
-  boss: { texture: 'boss', hp: 2000, speed: 70, contactDamage: 30, radius: 44, xp: 40, isBoss: true },
+  miniboss: { texture: 'miniboss', hp: 750, speed: 90, contactDamage: 22, radius: 34, xp: 15, isBoss: true },
+  boss: { texture: 'boss', hp: 2000, speed: 70, contactDamage: 30, radius: 40, xp: 40, isBoss: true },
 };
 
 // 스테이지별 잡몹 구성 비율 (스테이지 수보다 짧으면 마지막 항목을 계속 사용)
@@ -90,7 +91,6 @@ export const WAVE = {
   normalSpawnIntervalMs: 480,
   bossMinionIntervalMs: 1000, // 준보스/보스 웨이브 중 잡몹 등장 간격
   rushIntervalMs: 5000, // 무리 등장 간격 (진행할수록 짧아짐)
-  rushSpreadY: 90, // 무리가 퍼지는 세로 범위 (±px)
 };
 
 // 스테이지 클리어 시 최대 체력 대비 회복 비율
@@ -101,10 +101,6 @@ export const STAGE_CLEAR_HEAL_RATIO = 0.5;
 export function normalWaveEnemyCount(stage, wave) {
   return Math.round((22 + wave * 6) * (1 + 0.3 * (stage - 1)));
 }
-
-export const BOSS = {
-  directionFlipChance: 0.5, // 보스가 패턴에 진입할 때 방향 전환 확률 (준보스는 방향 전환 없음)
-};
 
 // 보스/준보스 AI. 추격(idleMs 범위에서 무작위) → 패턴 1회 → 다시 추격을 반복한다.
 // 같은 패턴이 연속으로 나오지 않는다. 모든 공격은 붉은 경고 표시 후 발동.
@@ -146,10 +142,19 @@ export const COIN_REWARDS = {
   newRecordBonus: 20,
 };
 
-// 홀수 스테이지 = 왼쪽, 짝수 스테이지 = 오른쪽에서 적 등장
-export function spawnSideForStage(stage) {
-  return stage % 2 === 1 ? 'left' : 'right';
-}
+// 탑다운 무한 월드: 카메라가 플레이어를 따라가고, 적은 화면 바깥 사방에서 등장한다.
+export const CAMERA = {
+  lerp: 0.12, // 카메라가 플레이어를 따라가는 부드러움 (1 = 즉시)
+  deadzoneW: 160, // 플레이어가 이 범위 안에서 움직이면 카메라는 그대로 (화면 중앙 부근)
+  deadzoneH: 100,
+};
+
+export const SPAWN = {
+  margin: 40, // 화면 가장자리 바깥으로 이만큼 떨어진 사각형 둘레에서 등장 (적 몸집 반경은 별도로 더함)
+  rushSpread: 110, // 무리가 둘레를 따라 퍼지는 거리 (±px)
+  // 플레이어에게서 이보다 멀어진 적은 플레이어 진행 방향 앞쪽 화면 밖으로 다시 배치 (도망만 다니지 못하게)
+  relocateDistance: 1100,
+};
 
 // 스킬 공용 게이지: 적 처치로 충전, 가득 차면 스킬 1회 사용 (사용 시 전부 소모)
 export const SKILL_GAUGE = {

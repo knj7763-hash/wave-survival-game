@@ -1,6 +1,6 @@
 // 런이 끝나도 남는 영구 데이터 (코인, 재료, 스킬, 무기, 코스튬, 아이템 강화). 브라우저 localStorage에 저장.
 import {
-  COSTUMES, DEFAULT_COSTUME, LEGACY_COSTUMES, WEAPON_PRICES, DEFAULT_WEAPON,
+  COSTUMES, DEFAULT_COSTUME, LEGACY_COSTUMES, WEAPON_PRICES, DEFAULT_WEAPON, PLAYER_CHARACTERS, DEFAULT_CHARACTER,
 } from '../shop/shopData.js';
 import { WEAPONS } from '../weapons/weaponData.js';
 
@@ -12,6 +12,7 @@ function defaults() {
     materials: { hair: 0, hide: 0, fang: 0 },
     skills: {}, // { skillId: level } - 보유한 스킬만
     equippedSkills: [], // 최대 3개
+    character: DEFAULT_CHARACTER, // 플레이어 캐릭터 (boy | girl)
     weapons: { owned: { [DEFAULT_WEAPON]: 1 }, equipped: DEFAULT_WEAPON }, // owned: { weaponId: 등급 1~3 }
     costumes: { owned: [DEFAULT_COSTUME], equipped: DEFAULT_COSTUME },
     items: { head: 0, body: 0, weapon: 0 }, // 강화 단계
@@ -30,6 +31,7 @@ export function loadSave() {
       materials: { ...base.materials, ...d.materials },
       skills: { ...d.skills },
       equippedSkills: Array.isArray(d.equippedSkills) ? d.equippedSkills : [],
+      character: d.character in PLAYER_CHARACTERS ? d.character : DEFAULT_CHARACTER,
       weapons: loadWeapons(d.weapons),
       costumes: loadCostumes(d.costumes),
       items: { ...base.items, ...d.items },

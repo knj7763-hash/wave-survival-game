@@ -1,64 +1,90 @@
-// 이미지 에셋 (Kenney Platformer Pack, CC0). 원본은 public/assets에 있고,
-// 로딩 후 투명 여백을 잘라내고 게임에서 쓸 크기로 미리 줄여 캔버스 텍스처로 만든다.
-// 그래서 게임 코드는 setScale 없이 텍스처 크기 그대로 쓰면 된다 (충돌 반경 계산도 기존과 동일).
-import { COSTUMES } from '../shop/shopData.js';
+// 이미지 에셋. 원본은 public/assets에 있고, 로딩 후 투명 여백을 잘라내고 게임에서 쓸 크기로 미리 줄여
+// 캔버스 텍스처로 만든다. 그래서 게임 코드는 setScale 없이 텍스처 크기 그대로 쓰면 된다.
+// - 학생/좀비 (public/assets/school): 한 장짜리 그림이라 걷기·피격·처치·공격 프레임은 기울이거나 색을 바꿔 만든다.
+// - 아이콘/파티클/상점 코스튬 미리보기 (Kenney Platformer Pack, CC0)
+import { COSTUMES, PLAYER_CHARACTERS, characterTextureKey } from '../shop/shopData.js';
 
 const RAW = 'raw:';
 const BASE = 'assets/';
+const SCHOOL = 'school/';
 
-// 적 종류별 이미지: [기본, 이동, 처치] 원본과 맞출 상자 크기 (px)
+// 적 종류별 그림과 표시 높이 (px). filter: 같은 그림을 다른 종류로 구분하는 색 변환 (캔버스 filter 문법).
+// 달리는 좀비/탱커 좀비는 전용 그림이 없어 기본 좀비를 작게·크게 줄이고 색을 바꿔 쓴다.
 const ENEMY_SPRITES = {
-  enemy: { frames: ['slimeGreen', 'slimeGreen_move', 'slimeGreen_dead'], box: 40 },
-  'enemy-runner': { frames: ['fly', 'fly_move', 'fly_dead'], box: 38 },
-  'enemy-tank': { frames: ['slimeBlock', 'slimeBlock_move', 'slimeBlock_dead'], box: 52 },
-  miniboss: { frames: ['barnacle', 'barnacle_attack', 'barnacle_dead'], box: 80 },
-  boss: { frames: ['saw', 'saw_move', 'saw_dead'], box: 112 },
+  enemy: { file: 'enemy_zombie_basic', height: 64 },
+  'enemy-runner': { file: 'enemy_zombie_basic', height: 54, filter: 'hue-rotate(35deg) saturate(1.5) brightness(1.1)' },
+  'enemy-tank': { file: 'enemy_zombie_basic', height: 84, filter: 'sepia(0.5) brightness(0.7) contrast(1.2)' },
+  miniboss: { file: 'enemy_zombie_subboss', height: 120 },
+  boss: { file: 'enemy_zombie_boss', height: 150 },
 };
 
-const PLAYER_FRAMES = ['stand', 'walk1', 'walk2', 'hit'];
-const PLAYER_BOX = { w: 46, h: 64 };
-const PLAYER_BIG_BOX = { w: 120, h: 170 }; // 타이틀/상점 미리보기용
+const PLAYER_HEIGHT = 80;
+const PLAYER_BIG_HEIGHT = 190; // 타이틀 화면용
+const HEAD_RATIO = 0.42; // HUD 얼굴 아이콘: 그림 윗부분에서 잘라 쓰는 비율
 
-// 스테이지별 배경 (스테이지 수보다 짧으면 마지막 배경을 계속 사용)
-export const STAGE_BACKGROUNDS = ['colored_grass', 'colored_desert', 'colored_shroom', 'colored_land', 'blue_shroom'];
+// 한 장짜리 그림으로 만드는 파생 프레임. 이름 뒤에 붙는 접미사 → { 기울기(도), 색 변환 }
+// 걷기는 발을 축으로 좌우로 번갈아 기울여 뒤뚱거리게 보이게 한다.
+const WADDLE_DEG = 5;
+const DERIVED = {
+  tiltRight: { rotate: WADDLE_DEG },
+  tiltLeft: { rotate: -WADDLE_DEG },
+  hit: { filter: 'sepia(1) saturate(5) hue-rotate(-40deg) brightness(0.9)' },
+  dead: { filter: 'grayscale(1) brightness(0.55)' },
+  attack: { filter: 'drop-shadow(0 0 5px #ff1744) drop-shadow(0 0 3px #ff1744) saturate(1.3)' },
+};
+const PLAYER_FRAMES = { '-walk1': DERIVED.tiltRight, '-walk2': DERIVED.tiltLeft, '-hit': DERIVED.hit };
+const ENEMY_FRAMES = { '-move': DERIVED.tiltRight, '-move2': DERIVED.tiltLeft, '-dead': DERIVED.dead, '-attack': DERIVED.attack };
 
-// 배경은 채도를 낮추고 어둡게 깔아서, 초록 슬라임/외계인 같은 캐릭터가 풀밭 배경에 묻히지 않게 한다
-export const BACKGROUND_TINT = 0x7c8699;
+// 상점 코스튬 탭의 외계인 미리보기 (게임 속 캐릭터는 학생 그림)
+const COSTUME_BIG_BOX = { w: 120, h: 170 };
 
-export function backgroundKey(stage) {
-  return `${RAW}bg-${STAGE_BACKGROUNDS[Math.min(stage, STAGE_BACKGROUNDS.length) - 1]}`;
+// 스테이지별 탑다운 바닥 무늬 (이음새 없이 반복되는 타일). 패럴랙스 층 구성은 Parallax.js
+// tileScale: 무늬 확대 배율, tint: 무늬에 곱할 색. 스테이지 수보다 짧으면 마지막 무늬를 계속 사용
+export const STAGE_GROUNDS = [
+  { tile: 'bg_floor_school_hallway', tileScale: 0.5, tint: 0xffffff },
+];
+
+export function groundOf(stage) {
+  return STAGE_GROUNDS[Math.min(stage, STAGE_GROUNDS.length) - 1];
+}
+
+export function groundKey(stage) {
+  return `${RAW}${groundOf(stage).tile}`;
 }
 
 export function preloadAssets(scene) {
   const img = (key, path) => scene.load.image(RAW + key, BASE + path);
-  for (const { color } of Object.values(COSTUMES)) {
-    for (const f of PLAYER_FRAMES) img(`alien${color}_${f}`, `players/alien${color}_${f}.png`);
-    img(`hudPlayer_${color.toLowerCase()}`, `hud/hudPlayer_${color.toLowerCase()}.png`);
-  }
-  for (const { frames } of Object.values(ENEMY_SPRITES)) for (const f of frames) img(f, `enemies/${f}.png`);
+  for (const { color } of Object.values(COSTUMES)) img(`alien${color}_stand`, `players/alien${color}_stand.png`);
+  for (const { file } of Object.values(PLAYER_CHARACTERS)) img(file, `${SCHOOL}${file}.png`);
+  // 기본/달리는/탱커 좀비는 같은 그림을 쓰므로 한 번만 불러온다
+  for (const file of new Set(Object.values(ENEMY_SPRITES).map((s) => s.file))) img(file, `${SCHOOL}${file}.png`);
   for (const p of ['fireball', 'brickBrown', 'brickGrey']) img(p, `particles/${p}.png`);
   for (const h of ['hudCoin', 'hudHeart_full', 'hudHeart_half', 'hudHeart_empty']) img(h, `hud/${h}.png`);
   for (const i of ['gemBlue', 'gemYellow', 'star']) img(i, `items/${i}.png`);
   img('spikes', 'tiles/spikes.png');
-  for (const b of STAGE_BACKGROUNDS) img(`bg-${b}`, `backgrounds/${b}.png`);
+  for (const { tile } of STAGE_GROUNDS) img(tile, `${SCHOOL}${tile}.png`);
 }
 
 // 로딩된 원본으로 게임용 텍스처와 애니메이션을 만든다
 export function buildAssets(scene) {
-  for (const [id, { color }] of Object.entries(COSTUMES)) {
-    bake(scene, PLAYER_FRAMES.map((f) => [f === 'stand' ? `player-${id}` : `player-${id}-${f}`, `alien${color}_${f}`]),
-      PLAYER_BOX.w, PLAYER_BOX.h);
-    bake(scene, [[`player-${id}-big`, `alien${color}_stand`]], PLAYER_BIG_BOX.w, PLAYER_BIG_BOX.h);
-    bake(scene, [[`hud-player-${id}`, `hudPlayer_${color.toLowerCase()}`]], 40, 40);
+  for (const [id, { file }] of Object.entries(PLAYER_CHARACTERS)) {
+    const key = characterTextureKey(id);
+    bakeCharacter(scene, key, file, PLAYER_HEIGHT, PLAYER_FRAMES);
+    bakeCharacter(scene, characterTextureKey(id, true), file, PLAYER_BIG_HEIGHT);
+    bakeHead(scene, `hud-${key}`, file, 44);
     scene.anims.create({
-      key: `player-${id}-walk`, frameRate: 8, repeat: -1,
-      frames: [{ key: `player-${id}-walk1` }, { key: `player-${id}-walk2` }],
+      key: `${key}-walk`, frameRate: 7, repeat: -1, frames: [{ key: `${key}-walk1` }, { key: `${key}-walk2` }],
     });
   }
+  for (const [id, { color }] of Object.entries(COSTUMES)) {
+    bake(scene, [[`player-${id}-big`, `alien${color}_stand`]], COSTUME_BIG_BOX.w, COSTUME_BIG_BOX.h);
+  }
 
-  for (const [key, { frames: [idle, move, dead], box }] of Object.entries(ENEMY_SPRITES)) {
-    bake(scene, [[key, idle], [`${key}-move`, move], [`${key}-dead`, dead]], box, box);
-    scene.anims.create({ key: `${key}-walk`, frameRate: 5, repeat: -1, frames: [{ key }, { key: `${key}-move` }] });
+  for (const [key, { file, height, filter }] of Object.entries(ENEMY_SPRITES)) {
+    bakeCharacter(scene, key, file, height, ENEMY_FRAMES, filter);
+    scene.anims.create({
+      key: `${key}-walk`, frameRate: 5, repeat: -1, frames: [{ key: `${key}-move` }, { key: `${key}-move2` }],
+    });
   }
 
   bake(scene, [['enemy-bullet', 'fireball']], 18, 18);
@@ -91,6 +117,49 @@ function bake(scene, frames, boxW, boxH) {
     ctx.drawImage(downscale(sources[i], box, w, h), 0, 0, w, h);
     tex.refresh();
   });
+}
+
+// 한 장짜리 캐릭터 그림을 height 높이로 줄여 key 텍스처로 만들고, frames의 파생 프레임(`${key}${접미사}`)도 만든다.
+// 기울인 프레임이 잘리지 않도록 모든 프레임을 같은 크기의 여백 있는 캔버스에 그린다 (애니메이션 중 위치 흔들림 없음).
+// 그림이 실제로 차지하는 영역은 텍스처 customData.body에 남겨서 충돌 판정 크기를 맞출 때 쓴다.
+function bakeCharacter(scene, key, raw, height, frames = {}, baseFilter = '') {
+  const src = scene.textures.get(RAW + raw).getSourceImage();
+  const box = opaqueBounds(src);
+  const scale = height / box.h;
+  const w = Math.max(1, Math.round(box.w * scale));
+  const h = Math.max(1, Math.round(box.h * scale));
+  const pad = Math.ceil(h * 0.1);
+  const canvasW = w + pad * 2;
+  const canvasH = h + pad * 2;
+  const art = downscale(src, box, w, h);
+
+  for (const [suffix, { rotate = 0, filter = '' }] of Object.entries({ '': {}, ...frames })) {
+    const tex = scene.textures.createCanvas(key + suffix, canvasW, canvasH);
+    const ctx = tex.getContext();
+    ctx.imageSmoothingQuality = 'high';
+    ctx.filter = [baseFilter, filter].filter(Boolean).join(' ') || 'none';
+    // 발 (아래쪽 가운데)을 축으로 기울인다
+    ctx.translate(canvasW / 2, pad + h);
+    ctx.rotate((rotate * Math.PI) / 180);
+    ctx.drawImage(art, -w / 2, -h, w, h);
+    tex.refresh();
+    tex.customData.body = { x: pad, y: pad, w, h };
+  }
+}
+
+// 캐릭터 그림의 윗부분 (얼굴)만 잘라 size×size 아이콘으로 만든다
+function bakeHead(scene, key, raw, size) {
+  const src = scene.textures.get(RAW + raw).getSourceImage();
+  const box = opaqueBounds(src);
+  const head = { x: box.x, y: box.y, w: box.w, h: Math.round(box.h * HEAD_RATIO) };
+  const scale = Math.min(size / head.w, size / head.h);
+  const w = Math.max(1, Math.round(head.w * scale));
+  const h = Math.max(1, Math.round(head.h * scale));
+  const tex = scene.textures.createCanvas(key, w, h);
+  const ctx = tex.getContext();
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(downscale(src, head, w, h), 0, 0, w, h);
+  tex.refresh();
 }
 
 function opaqueBounds(img) {

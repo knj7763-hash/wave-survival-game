@@ -2,7 +2,7 @@
 import { SKILLS, MAX_EQUIPPED_SKILLS } from '../skills/skillData.js';
 import { WEAPONS } from '../weapons/weaponData.js';
 import {
-  ITEMS, MAX_ITEM_LEVEL, ENHANCE_TABLE, STAT_EFFECT, COSTUMES, WEAPON_PRICES, WEAPON_TIER_COSTS,
+  ITEMS, MAX_ITEM_LEVEL, ENHANCE_TABLE, STAT_EFFECT, COSTUMES, WEAPON_PRICES, WEAPON_TIER_COSTS, PLAYER_CHARACTERS,
 } from './shopData.js';
 
 const MAX_SKILL_LEVEL = 5;
@@ -134,6 +134,15 @@ export function equipWeapon(save, id) {
 export function getEquippedWeapon(save) {
   const id = save.weapons.equipped;
   return { id, level: save.weapons.owned[id] };
+}
+
+// ─── 캐릭터 (성별) ────────────────────────────────────
+
+// 성별 선택 UI를 붙일 때 호출. 다음 런부터 적용된다.
+export function setCharacter(save, id) {
+  if (!(id in PLAYER_CHARACTERS)) return { ok: false, reason: '없는 캐릭터' };
+  save.character = id;
+  return { ok: true };
 }
 
 // ─── 코스튬 ──────────────────────────────────────────

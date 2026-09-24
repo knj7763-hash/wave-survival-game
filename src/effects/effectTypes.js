@@ -1,5 +1,4 @@
 import Phaser from 'phaser';
-import { GAME_WIDTH, GAME_HEIGHT } from '../config.js';
 import { LEVEL_UP_EFFECTS, MAX_EFFECT_LEVEL } from './effectData.js';
 import { playSfx } from '../systems/Sound.js';
 
@@ -173,7 +172,7 @@ class SoccerBall extends LevelUpEffect {
           : null;
         if (!ball.target) ball.life = Math.min(ball.life, 250);
       }
-      if (ball.life <= 0 || !onScreen(sprite, 40)) ball.done = true;
+      if (ball.life <= 0 || !onScreen(this.scene, sprite, 40)) ball.done = true;
     }
     this.balls = sweep(this.balls, (b) => b.done, (b) => fadeOut(this.scene, b.sprite));
   }
@@ -186,7 +185,7 @@ class SoccerBall extends LevelUpEffect {
 // ─── 번개 체인: 무작위 적에게 낙뢰 후 주변 적에게 연쇄 ──────
 class ChainLightning extends LevelUpEffect {
   trigger() {
-    const candidates = this.activeEnemies().filter((e) => onScreen(e));
+    const candidates = this.activeEnemies().filter((e) => onScreen(this.scene, e));
     if (!candidates.length) return false;
     const { targets, damage, chainRange } = this.stats;
 
@@ -203,7 +202,8 @@ class ChainLightning extends LevelUpEffect {
     // 하늘에서 첫 대상으로 떨어지는 번개 + 대상 사이를 잇는 번개
     const g = this.scene.add.graphics().setDepth(7);
     const first = chain[0];
-    drawBolt(g, first.x + Phaser.Math.Between(-30, 30), -10, first.x, first.y, 10);
+    // 탑다운 시점이라 화면 위쪽 끝을 하늘로 본다
+    drawBolt(g, first.x + Phaser.Math.Between(-30, 30), this.scene.viewRect().top - 10, first.x, first.y, 10);
     for (let i = 1; i < chain.length; i++) drawBolt(g, chain[i - 1].x, chain[i - 1].y, chain[i].x, chain[i].y, 6);
     for (const e of chain) {
       g.fillStyle(0xe3f2fd, 0.8).fillCircle(e.x, e.y, e.radius * 0.8);
@@ -262,8 +262,8 @@ class SawBlade extends ZoneEffect {
 
   trigger() {
     const { radius, offset } = this.stats;
-    const x = Phaser.Math.Clamp(this.player.x + this.dir.x * offset, radius, GAME_WIDTH - radius);
-    const y = Phaser.Math.Clamp(this.player.y + this.dir.y * offset, radius, GAME_HEIGHT - radius);
+    const x = this.player.x + this.dir.x * offset;
+    const y = this.player.y + this.dir.y * offset;
     const blade = this.scene.add.image(0, 0, 'fx-saw').setDisplaySize(radius * 2, radius * 2);
     const glow = this.scene.add.circle(0, 0, radius, 0xcfd8dc, 0.12).setStrokeStyle(2, 0xeceff1, 0.5);
     const view = this.scene.add.container(x, y, [glow, blade]).setDepth(ZONE_DEPTH).setScale(0.3);
@@ -431,8 +431,9 @@ class Boomerang extends LevelUpEffect {
 
 // ─── 공용 도우미 ─────────────────────────────────────
 
-function onScreen(obj, margin = 0) {
-  return obj.x >= -margin && obj.x <= GAME_WIDTH + margin && obj.y >= -margin && obj.y <= GAME_HEIGHT + margin;
+// 지금 카메라에 보이는 영역 안인지 (margin만큼 바깥까지 포함)
+function onScreen(scene, obj, margin = 0) {
+  return scene.viewRect(margin).contains(obj.x, obj.y);
 }
 
 // isDone인 항목은 cleanup 후 빼고, 나머지만 담은 새 목록을 반환
